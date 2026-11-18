@@ -1535,6 +1535,8 @@ impl Bake {
         remove.sort_unstable();
 
         let replaced = replacements.iter().map(|atom| atom.instance).collect::<HashSet<_>>();
+        let mut thinned_areas = HashSet::new();
+        let mut detached = Vec::new();
         for id in &remove {
             let is_replaced = replaced.contains(id);
             if let Some(atom) = self.atoms.remove(id) {
@@ -1547,15 +1549,15 @@ impl Bake {
                     cell.retain(|value| value != id);
                 }
             }
+
             if let Some(object) = self.objects.remove(id) {
                 let mut shared = false;
                 if let Some(members) = self.area_members.get_mut(&object) {
                     members.remove(id);
                     shared = !members.is_empty();
-                    if let Ok(value) = self.runtime.heap.object_mut(object) {
-                        value.instance = members.iter().copied().min();
-                    }
+                    thinned_areas.insert(object);
                 }
+
                 if !shared {
                     self.area_members.remove(&object);
                     self.areas.retain(|_, value| *value != object);
@@ -1563,12 +1565,13 @@ impl Bake {
                     self.prepare_faults.remove(&object);
                     self.lit.remove(object);
                     let _ = self.runtime.heap.delete_unplaced_contents(object);
-                    let _ = self.runtime.heap.relocate(object, None);
+                    detached.push(object);
                     if let Ok(object) = self.runtime.heap.object_mut(object) {
                         object.deleted = true;
                     }
                 }
             }
+
             if let Some(fault) = self.faults.remove(id) {
                 self.diagnostics.remove(&fault);
             }
@@ -1595,6 +1598,19 @@ impl Bake {
             self.failed.remove(id);
             self.remove_contribution(*id);
         }
+
+        // once per area and parent, since per removed atom both scans are quadratic in an area's size
+        for area in thinned_areas {
+            let instance = self
+                .area_members
+                .get(&area)
+                .and_then(|members| members.iter().copied().min());
+            if let Ok(value) = self.runtime.heap.object_mut(area) {
+                value.instance = instance;
+            }
+        }
+
+        let _ = self.runtime.heap.detach(&detached);
 
         let total = replacements.len();
         for (index, atom) in replacements.into_iter().enumerate() {

@@ -1,5 +1,5 @@
 use base::{bitset::BitIndex, interner::SymbolMap, types::Identifier, vars};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use objtree::{SharedVarId, TypeId};
 
@@ -299,6 +299,24 @@ impl Heap {
         Ok(())
     }
 
+    // one contents scan per parent, where relocate(id, None) per object rescans it every time
+    pub(crate) fn detach(&mut self, ids: &[ObjectId]) -> Result<(), FaultKind> {
+        let mut by_parent = HashMap::<ObjectId, HashSet<ObjectId>>::new();
+        for id in ids {
+            if let Some(parent) = self.object_mut(*id)?.loc.take() {
+                by_parent.entry(parent).or_default().insert(*id);
+            }
+        }
+
+        for (parent, children) in by_parent {
+            self.object_mut(parent)?
+                .contents
+                .retain(|child| !children.contains(child));
+        }
+
+        Ok(())
+    }
+
     /// Deletes descendants created by runtime code, while leaving map placements to be relinked.
     pub(crate) fn delete_unplaced_contents(&mut self, parent: ObjectId) -> Result<(), FaultKind> {
         let mut pending = self
@@ -325,10 +343,49 @@ impl Heap {
 
 #[cfg(test)]
 mod tests {
-    use objtree::SharedVarId;
+    use objtree::{SharedVarId, TypeId};
 
-    use super::{Heap, Static};
+    use super::{Heap, Object, ObjectId, Static};
     use crate::value::GenericValue;
+
+    fn parent_with_children(heap: &mut Heap, count: usize) -> (ObjectId, Vec<ObjectId>) {
+        let parent = heap.alloc_object(Object::new(TypeId::ROOT)).unwrap();
+        let children = (0..count)
+            .map(|_| {
+                let child = heap.alloc_object(Object::new(TypeId::ROOT)).unwrap();
+                heap.relocate(child, Some(parent)).unwrap();
+
+                child
+            })
+            .collect::<Vec<_>>();
+
+        (parent, children)
+    }
+
+    #[test]
+    fn detach_keeps_the_remaining_contents_in_order() {
+        let mut heap = Heap::default();
+        let (parent, children) = parent_with_children(&mut heap, 5);
+        heap.detach(&[children[3], children[0]]).unwrap();
+
+        let remaining = [children[1], children[2], children[4]];
+        assert_eq!(heap.object(parent).unwrap().contents, remaining);
+        assert_eq!(heap.object(children[0]).unwrap().loc, None);
+        assert_eq!(heap.object(children[3]).unwrap().loc, None);
+        assert_eq!(heap.object(children[1]).unwrap().loc, Some(parent));
+    }
+
+    #[test]
+    fn detach_rolls_back_with_the_journal() {
+        let mut heap = Heap::default();
+        let (parent, children) = parent_with_children(&mut heap, 3);
+        heap.begin();
+        heap.detach(&[children[1]]).unwrap();
+        heap.rollback();
+
+        assert_eq!(heap.object(parent).unwrap().contents, children);
+        assert_eq!(heap.object(children[1]).unwrap().loc, Some(parent));
+    }
 
     #[test]
     fn rollback_restores_statics_written_in_the_journal() {

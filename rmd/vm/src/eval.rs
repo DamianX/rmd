@@ -1,7 +1,8 @@
+use ast::{fold_number, fold_unary_number};
 use base::{
     location::SourceLine,
     path::{PathFlags, TreePath},
-    types::{Identifier, ProcId, Value},
+    types::{IMPROPER_MACRO, Identifier, PROPER_MACRO, ProcId, TEXT_MACRO, Value, strip_text_macros},
     vars,
 };
 use std::{
@@ -20,7 +21,7 @@ use crate::{
     Fault, FaultKind, GenericValue, Limits, StackFrame,
     bake::Placement,
     heap::{Heap, Object, ObjectId, Static},
-    value::{IteratorId, ListData, ListId, ModifiedType, ProcRef, RangeValue, Src},
+    value::{IteratorId, ListData, ListId, MAX_EXACT_INTEGER, ModifiedType, ProcRef, RangeValue, Src},
     world::{Position, World},
 };
 
@@ -474,6 +475,40 @@ impl<'a> Evaluator<'a> {
             .map_err(|kind| self.fault(kind))
     }
 
+    pub fn text_of(&mut self, value: &GenericValue) -> String {
+        let GenericValue::Object(id) = value else {
+            return value.display();
+        };
+        let Some(ty) = self.runtime.heap.object(*id).map(|object| object.ty) else {
+            return value.display();
+        };
+
+        let is_atom = self.is_root_type(value, self.tree.roots().atom);
+        if !is_atom {
+            return self
+                .tree
+                .get(ty)
+                .map_or_else(|| value.display(), |decl| decl.path.spelled());
+        }
+
+        let name = match self.read_field(value.clone(), &Identifier::from("name")) {
+            Ok(GenericValue::Text(name)) => name,
+            _ => return String::new(),
+        };
+        let marked = |code: char| name.strip_prefix(TEXT_MACRO).and_then(|rest| rest.strip_prefix(code));
+        let text = if let Some(rest) = marked(PROPER_MACRO) {
+            rest.to_string()
+        } else if let Some(rest) = marked(IMPROPER_MACRO) {
+            format!("the {rest}")
+        } else if name.is_empty() || name.starts_with(|ch: char| ch.is_ascii_uppercase()) {
+            name.to_string()
+        } else {
+            format!("the {name}")
+        };
+
+        strip_text_macros(&text)
+    }
+
     pub fn text(&mut self, text: String) -> Result<GenericValue> {
         if text.len() > self.limits.text_bytes {
             return Err(self.fault(FaultKind::Memory));
@@ -495,7 +530,7 @@ impl<'a> Evaluator<'a> {
         self.rng ^= self.rng << 13;
         self.rng ^= self.rng >> 7;
         self.rng ^= self.rng << 17;
-        ((self.rng >> 40) as f32) / 16_777_216.0
+        ((self.rng >> 40) as f32) / MAX_EXACT_INTEGER
     }
 
     pub fn find_proc(&self, ty: TypeId, name: &Identifier) -> Option<ProcId> {
@@ -772,12 +807,12 @@ impl<'a> Evaluator<'a> {
                     for (index, chunk) in chunks.iter().enumerate() {
                         output.push_str(chunk);
                         if let Some(value) = registers.get(index) {
-                            let value = self.get(frame, *value)?;
+                            let value = self.get(frame, *value)?.clone();
                             if matches!(value, GenericValue::Object(_) | GenericValue::Proc(_)) {
                                 self.is_cacheable = false;
                             }
 
-                            output.push_str(&value.display());
+                            output.push_str(&self.text_of(&value));
                         }
 
                         if output.len() > self.limits.text_bytes {
@@ -1137,7 +1172,8 @@ impl<'a> Evaluator<'a> {
                             return Err(self.fault(FaultKind::Blocked("output".into())));
                         }
 
-                        let text = self.get(frame, value)?.display();
+                        let value = self.get(frame, value)?.clone();
+                        let text = strip_text_macros(&self.text_of(&value));
                         self.runtime.output.push(text);
                     },
                 },
@@ -2228,9 +2264,14 @@ impl Evaluator<'_> {
         }
 
         Ok(match op {
-            Unary::Neg => (-self.number(&value)?).into(),
+            Unary::Neg | Unary::BitNot => {
+                let number = self.number(&value)?;
+                let folded = fold_unary_number(op.into(), number);
+                folded
+                    .map(Into::into)
+                    .ok_or_else(|| self.fault(FaultKind::Unsupported(format!("{op:?}"))))?
+            },
             Unary::Not => (!value.truthy()).into(),
-            Unary::BitNot => ((!(self.number(&value)? as u32) & 0x00ff_ffff) as f32).into(),
             Unary::PreIncrement | Unary::PostIncrement => (self.number(&value)? + 1.0).into(),
             Unary::PreDecrement | Unary::PostDecrement => (self.number(&value)? - 1.0).into(),
             Unary::Reference | Unary::Dereference => {
@@ -2316,42 +2357,10 @@ impl Evaluator<'_> {
         let left = self.number(&left)?;
         let right = self.number(&right)?;
 
-        if matches!(op, Div | Mod | FloatMod) && right == 0.0 {
-            return Err(self.fault(FaultKind::InvalidOperation("division by zero".into())));
+        match fold_number(op.into(), left, right) {
+            Some(value) => Ok(value.into()),
+            None => Err(self.fault(FaultKind::InvalidOperation("division by zero".into()))),
         }
-
-        Ok(match op {
-            Add => (left + right).into(),
-            Sub => (left - right).into(),
-            Mul => (left * right).into(),
-            Div => (left / right).into(),
-            Mod => {
-                if right.trunc() == 0.0 {
-                    return Err(self.fault(FaultKind::InvalidOperation("division by zero".into())));
-                }
-                (left.trunc() % right.trunc()).into()
-            },
-            FloatMod => (left % right).into(),
-            Pow => left.powf(right).into(),
-            BitAnd => (((left as u32) & (right as u32)) as f32).into(),
-            BitOr => (((left as u32) | (right as u32)) as f32).into(),
-            BitXor => (((left as u32) ^ (right as u32)) as f32).into(),
-            ShiftLeft => (((left as u32).checked_shl(right as u32).unwrap_or(0) & 0x00ff_ffff) as f32).into(),
-            ShiftRight => (((left as u32).checked_shr(right as u32).unwrap_or(0)) as f32).into(),
-            CompLess => (left < right).into(),
-            CompLessEq => (left <= right).into(),
-            CompGreater => (left > right).into(),
-            CompGreaterEq => (left >= right).into(),
-            CompThreeWay => (if left < right {
-                -1.0
-            } else if left > right {
-                1.0
-            } else {
-                0.0
-            })
-            .into(),
-            _ => return Err(self.fault(FaultKind::InvalidOperation(format!("{op:?}")))),
-        })
     }
 
     /// `L += x` changes `L` itself, so every alias of it sees the change

@@ -471,15 +471,10 @@ impl Evaluator<'_> {
         };
 
         match &value {
-            GenericValue::Path(path) => self.tree.id_of(path).is_some_and(|ty| {
-                base_path
-                    .as_ref()
-                    .and_then(|base| self.tree.id_of(base))
-                    .is_none_or(|base| self.tree.is_subtype_of(ty, base))
-            }),
             GenericValue::Object(_) | GenericValue::List(_) | GenericValue::ArgList(_) => {
                 base_path.is_none() || self.matches_type(&value, &base_path)
             },
+            // a type path is not an instance, ispath() tests those
             _ => false,
         }
     }

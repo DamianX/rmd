@@ -3271,6 +3271,14 @@ fn one_argument_istype_uses_the_declared_type() {
 }
 
 #[test]
+fn istype_rejects_a_type_path() {
+    assert_eq!(
+        run(fixture!("programs/istype_rejects_a_type_path.dm"), "test"),
+        0.into()
+    );
+}
+
+#[test]
 fn initial_reads_the_declaration_instead_of_the_current_field() {
     assert_eq!(
         run(

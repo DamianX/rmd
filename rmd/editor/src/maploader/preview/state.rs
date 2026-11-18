@@ -17,6 +17,7 @@ use crate::{
 
 pub struct ModulePreviewState {
     pub enabled: bool,
+    pub is_blocked: bool,
     pub choices: ModuleChoices,
     pub preview: Option<ModuleOverlay>,
     pub specs: RootSpecs,
@@ -30,6 +31,7 @@ impl Default for ModulePreviewState {
     fn default() -> Self {
         Self {
             enabled: true,
+            is_blocked: false,
             choices: ModuleChoices::new(),
             preview: None,
             specs: RootSpecs::default(),
@@ -52,6 +54,7 @@ impl ModulePreviewState {
     pub fn fresh(&self) -> Self {
         Self {
             enabled: self.enabled,
+            is_blocked: self.is_blocked,
             choices: self.choices.clone(),
             files: self.files.open_only(),
             ..Self::default()
@@ -83,7 +86,7 @@ impl ModulePreviewState {
     }
 
     pub fn needs_recompose(&self, specs: &RootSpecs) -> bool {
-        self.specs != *specs
+        !self.is_blocked && self.specs != *specs
     }
 
     pub fn reset(&mut self) {
@@ -104,6 +107,10 @@ impl ModulePreviewState {
     }
 
     fn compose(&mut self, ctx: ComposeContext<'_>, dirty: &HashSet<Coord>) -> Vec<PrefabInstanceId> {
+        if self.is_blocked {
+            return Vec::new();
+        }
+
         let next = update(
             ctx,
             &self.specs,

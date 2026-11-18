@@ -48,6 +48,10 @@ pub struct TileRegion {
 }
 
 impl TileRegion {
+    pub fn hidden(&self) -> &HiddenTypes {
+        &self.hidden
+    }
+
     pub fn merge(&self) -> PasteMerge {
         self.merge
     }

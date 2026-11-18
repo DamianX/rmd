@@ -43,7 +43,7 @@ impl Session {
                     }
 
                     let mut settled = vec![id];
-                    for other in self.state.document_ids() {
+                    for other in self.rendered_document_ids() {
                         if other != id && self.replay_ui(other, &replayed) {
                             settled.push(other);
                         }
@@ -120,7 +120,7 @@ impl Session {
     }
 
     fn flush_pending_rebakes(&mut self) {
-        for id in self.state.document_ids() {
+        for id in self.rendered_document_ids() {
             self.flush_pending_rebake(id);
         }
     }

@@ -70,6 +70,29 @@ pub(crate) struct MapViewState {
     context: Option<MenuTarget>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum ViewKind {
+    Map,
+    StashEntry(OverlayRect),
+}
+
+pub(crate) struct ViewOutput<'a> {
+    pub(crate) visible: &'a mut Vec<VisibleMapView>,
+    pub(crate) coop: &'a mut CoopPresence,
+}
+
+struct ViewContents<'a> {
+    id: DocumentId,
+    kind: ViewKind,
+    index: usize,
+    name: &'a str,
+    is_out_of_date: bool,
+    view: &'a mut MapViewState,
+    interaction: &'a mut MapViewInteraction,
+    guide_badges: &'a [GuideBadge],
+    coop: &'a mut CoopPresence,
+}
+
 pub(crate) struct MapViewDraw<'a> {
     pub(crate) id: DocumentId,
     pub(crate) index: usize,
@@ -116,14 +139,19 @@ pub(crate) struct ViewLayout {
 }
 
 impl ViewLayout {
-    fn new(ui: &Ui, extent: (u32, u32), scale: [f32; 2]) -> Self {
+    fn new(ui: &Ui, extent: (u32, u32), scale: [f32; 2], kind: ViewKind) -> Self {
         let viewport = OverlayRect {
             min: ui.item_rect_min(),
             max: ui.item_rect_max(),
         };
         let padding = overlay_padding(ui);
-        let top_height = ui.frame_height() + padding * 2.0;
-        let bottom_height = recent_button_size(ui) + padding * 2.0;
+        let (top_height, bottom_height) = match kind {
+            ViewKind::Map => (
+                ui.frame_height() + padding * 2.0,
+                recent_button_size(ui) + padding * 2.0,
+            ),
+            ViewKind::StashEntry(_) => (0.0, 0.0),
+        };
 
         Self {
             extent,
@@ -164,6 +192,7 @@ impl ViewLayout {
 
 pub(crate) struct ViewFrame<'a> {
     pub(crate) id: DocumentId,
+    kind: ViewKind,
     pub(crate) camera: &'a mut Controller,
     refit: &'a mut bool,
     pub(crate) gestures: &'a mut ViewGestures,
@@ -226,7 +255,7 @@ fn cursor_in_map_view(local: [f32; 2], scale: [f32; 2]) -> [u32; 2] {
     ]
 }
 
-fn panel_extent(available: [f32; 2]) -> ([f32; 2], (u32, u32)) {
+pub(crate) fn panel_extent(available: [f32; 2]) -> ([f32; 2], (u32, u32)) {
     let width = if available[0].is_finite() {
         available[0].max(1.0)
     } else {
@@ -281,76 +310,43 @@ impl UiState {
         }
 
         for id in session.state.document_ids() {
-            let mut view = match self.map_views.remove(&id) {
-                Some(view) => view,
-                None => match MapViewState::new(id) {
-                    Ok(view) => view,
-                    Err(e) => {
-                        log::error!("could not create a map view window for document {}: {e}", id.get());
-
-                        continue;
-                    },
-                },
-            };
-
-            if self.close_focus == Some(CloseFocus::Map(id)) {
-                self.close_focus = None;
-                view.focus = true;
-            }
-
-            let refit = refit_active && session.state.active() == Some(id);
-            let mut keep_open = true;
-            let active = session.state.active() == Some(id);
-            let guides = if active && settings.selection_guide_line && session.tool() == Tool::Pick {
-                session.picked_guides()
-            } else {
-                Default::default()
-            };
-            let mut interaction = MapViewInteraction {
-                highlight: settings.selection_highlight.style(),
-                mode: interaction_mode(session.tool()),
-                ..Default::default()
-            };
-            let map_view_index = visible.len();
-            self.draw_map_view(
+            if self.draw_document_view(
                 ui,
                 session,
                 settings,
-                MapViewDraw {
-                    id,
-                    index: map_view_index,
-                    view: &mut view,
-                    interaction: &mut interaction,
-                    guide_badges: &guides.badges,
+                id,
+                refit_active,
+                ViewKind::Map,
+                ViewOutput {
+                    visible: &mut visible,
+                    coop: &mut coop,
+                },
+            ) == Some(false)
+            {
+                closing = Some(id);
+            }
+        }
 
-                    refit_requested: refit,
-                    keep_open: &mut keep_open,
+        if mem::take(&mut self.is_stash_open_requested) {
+            settings.panels.stash = true;
+            self.stash_view.refit();
+        }
+
+        if settings.panels.stash {
+            self.draw_stash(
+                ui,
+                session,
+                settings,
+                refit_active,
+                ViewOutput {
+                    visible: &mut visible,
                     coop: &mut coop,
                 },
             );
+        }
 
-            if view.visible && !view.rect.is_empty() {
-                let picked = if active && shows_picked(session.tool()) {
-                    session.picked_instances()
-                } else {
-                    Vec::new()
-                };
-                visible.push(VisibleMapView {
-                    document: id,
-                    rect: view.rect,
-                    camera: view.camera.camera,
-                    interaction,
-                    guide_lines: guides.lines,
-                    connected: guides.connected,
-                    picked,
-                });
-            }
-
-            self.map_views.insert(id, view);
-
-            if !keep_open {
-                closing = Some(id);
-            }
+        if !settings.panels.stash {
+            self.hide_stash(session);
         }
 
         if let Some(id) = closing {
@@ -367,6 +363,103 @@ impl UiState {
         let picking = visible.iter().position(|view| view.interaction.cursor.is_some());
 
         (visible, picking, coop)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn draw_document_view(
+        &mut self, ui: &Ui, session: &mut Session, settings: &mut Settings, id: DocumentId, refit_active: bool,
+        kind: ViewKind, output: ViewOutput<'_>,
+    ) -> Option<bool> {
+        let ViewOutput { visible, coop } = output;
+        let mut view = match self.map_views.remove(&id) {
+            Some(view) => view,
+            None => match MapViewState::new(id) {
+                Ok(view) => view,
+                Err(e) => {
+                    log::error!("could not create a map view window for document {}: {e}", id.get());
+
+                    return None;
+                },
+            },
+        };
+
+        if self.close_focus == Some(CloseFocus::Map(id)) {
+            self.close_focus = None;
+            view.focus = true;
+        }
+
+        let refit = refit_active && session.state.active() == Some(id);
+        let mut keep_open = true;
+        let active = session.state.active() == Some(id);
+        let guides = if active && settings.selection_guide_line && session.tool() == Tool::Pick {
+            session.picked_guides()
+        } else {
+            Default::default()
+        };
+        let mut interaction = MapViewInteraction {
+            highlight: settings.selection_highlight.style(),
+            mode: interaction_mode(session.tool()),
+            ..Default::default()
+        };
+        let map_view_index = visible.len();
+        match kind {
+            ViewKind::Map => self.draw_map_view(
+                ui,
+                session,
+                settings,
+                MapViewDraw {
+                    id,
+                    index: map_view_index,
+                    view: &mut view,
+                    interaction: &mut interaction,
+                    guide_badges: &guides.badges,
+
+                    refit_requested: refit,
+                    keep_open: &mut keep_open,
+                    coop,
+                },
+            ),
+            ViewKind::StashEntry(_) => {
+                view.visible = false;
+                self.draw_view_contents(
+                    ui,
+                    session,
+                    settings,
+                    ViewContents {
+                        id,
+                        kind,
+                        index: map_view_index,
+                        name: "",
+                        is_out_of_date: false,
+                        view: &mut view,
+                        interaction: &mut interaction,
+                        guide_badges: &guides.badges,
+                        coop,
+                    },
+                );
+            },
+        }
+
+        if view.visible && !view.rect.is_empty() {
+            let picked = if active && shows_picked(session.tool()) {
+                session.picked_instances()
+            } else {
+                Vec::new()
+            };
+            visible.push(VisibleMapView {
+                document: id,
+                rect: view.rect,
+                camera: view.camera.camera,
+                interaction,
+                guide_lines: guides.lines,
+                connected: guides.connected,
+                picked,
+            });
+        }
+
+        self.map_views.insert(id, view);
+
+        Some(keep_open)
     }
 
     pub(crate) fn draw_map_view(
@@ -397,126 +490,165 @@ impl UiState {
         let is_out_of_date = session.coop_out_of_date(id).is_some();
         let title = map_view_title(session, id, &name, is_out_of_date);
 
-        // the window label borrows the key for the whole window, so the rest of the view is borrowed field by field
-        let MapViewState {
-            window,
-            camera,
-            size,
-            rect,
-            visible,
-            placed,
-            refit,
-            focus,
-            hovered_coord,
-            blame_popup,
-            prefab_menu,
-            gestures,
-            context,
-        } = view;
-        *visible = false;
-        *refit |= refit_requested;
+        view.visible = false;
+        view.refit |= refit_requested;
 
-        if !mem::replace(placed, true)
+        if !mem::replace(&mut view.placed, true)
             && let Some(node) = self.central_node.or(self.dockspace_root)
         {
             ui.set_next_window_dock_id_with_cond(node, Condition::Always);
         }
 
+        let window = view.window.clone();
         let map_window = ui
             .window(window.label(title.as_str()))
             .flags(flags)
             .opened(keep_open)
-            .focused(mem::take(focus));
+            .focused(mem::take(&mut view.focus));
         map_window.build(|| {
             draw_tab_menu(ui, session, id);
-            self.activate_on_focus(ui, session, settings, id, gestures);
-
-            let is_receiving = draw_coop_status(ui, session, id, &name, is_out_of_date);
-            if is_receiving || session.coop_transfer(id).is_some() {
-                self.raise_demand(FrameDemand::Full);
-            }
-
-            if is_receiving {
-                return;
-            }
-
-            let (image_size, extent) = panel_extent(ui.content_region_avail());
-            *size = extent;
-            camera.resize(extent.0, extent.1);
-            if *refit {
-                let (width, height) = session.extent_px_of(id);
-                camera.frame_map(width, height);
-                *refit = false;
-            }
-
-            *visible = true;
-
-            let scale = ui.io().display_framebuffer_scale();
-            *rect = framebuffer_rect(ui.cursor_screen_pos(), image_size, scale, ui.io().display_size());
-            ui.image(Renderer::map_view_texture(index), image_size);
-
-            let is_image_hovered = ui.is_item_hovered();
-            let layout = ViewLayout::new(ui, extent, scale);
-            let mouse = ui.io().mouse_pos();
-            let mut frame = ViewFrame {
-                id,
-                camera,
-                refit,
-                gestures,
-                blame_popup,
-                context,
-                interaction,
-                layout,
-                mouse,
-                is_active: session.state.active() == Some(id),
-                is_focused: ui.is_window_focused(),
-                is_pointed: is_image_hovered
-                    && !layout.top_overlay.contains(mouse)
-                    && !layout.bottom_overlay.contains(mouse),
-                is_hovered: false,
-                cursor: None,
-                coord: None,
-            };
-
-            let comment_hit = hit_comment(ui, session, &frame);
-            frame.is_hovered = frame.is_pointed && comment_hit.is_none() && frame.is_active;
-            let is_drag_panning = frame.is_hovered && settings.keybindings.get(KeybindAction::PanDrag).is_held(ui);
-            self.release_momentary_tool(ui, session, frame.is_hovered && !is_drag_panning);
-            choose_recent_on_key(ui, session, settings, frame.is_focused);
-
-            if frame.is_hovered && !ui.io().want_text_input() {
-                self.pan_and_zoom(ui, settings, &mut frame, is_drag_panning);
-                self.apply_view_shortcuts(ui, session, settings, frame.refit);
-                if *frame.refit {
-                    let (width, height) = session.extent_px();
-                    frame.camera.frame_map(width, height);
-                    *frame.refit = false;
-                }
-            }
-
-            frame.is_hovered &= !is_drag_panning;
-            self.draw_view_overlays(ui, session, settings, &frame, *hovered_coord, guide_badges);
-            self.draw_coop_overlays(ui, session, &frame, comment_hit);
-
-            let is_over_blame_popup = frame
-                .blame_popup
-                .as_ref()
-                .and_then(|popup| popup.bounds)
-                .is_some_and(|bounds| bounds.contains(mouse));
-            frame.resolve_cursor(session, is_over_blame_popup);
-            *hovered_coord = frame.coord;
-            share_presence(session, &frame, coop);
-
-            let is_blame_capturing = draw_tile_hover(ui, session, &mut frame, is_over_blame_popup);
-            update_prefab_menu(ui, session, settings, id, frame.is_focused, prefab_menu, &mut self.find);
-            let node_hit = draw_node_hit(ui, session, &frame);
-            configure_tool_interaction(session.tool(), frame.interaction);
-            self.toggle_focus_on_key(ui, session, settings, &frame);
-
-            if frame.is_active {
-                self.draw_active_map(ui, session, settings, &mut frame, &node_hit, is_blame_capturing);
-            }
+            self.draw_view_contents(
+                ui,
+                session,
+                settings,
+                ViewContents {
+                    id,
+                    kind: ViewKind::Map,
+                    index,
+                    name: &name,
+                    is_out_of_date,
+                    view,
+                    interaction,
+                    guide_badges,
+                    coop,
+                },
+            );
         });
+    }
+
+    fn draw_view_contents(
+        &mut self, ui: &Ui, session: &mut Session, settings: &mut Settings, contents: ViewContents<'_>,
+    ) {
+        let ViewContents {
+            id,
+            kind,
+            index,
+            name,
+            is_out_of_date,
+            view,
+            interaction,
+            guide_badges,
+            coop,
+        } = contents;
+        let MapViewState {
+            camera,
+            size,
+            rect,
+            visible,
+            refit,
+            hovered_coord,
+            blame_popup,
+            prefab_menu,
+            gestures,
+            context,
+            ..
+        } = view;
+        if kind == ViewKind::Map {
+            self.activate_on_focus(ui, session, settings, id, gestures);
+        }
+
+        let is_receiving = draw_coop_status(ui, session, id, name, is_out_of_date);
+        if is_receiving || session.coop_transfer(id).is_some() {
+            self.raise_demand(FrameDemand::Full);
+        }
+
+        if is_receiving {
+            return;
+        }
+
+        let (image_size, extent) = match kind {
+            ViewKind::Map => panel_extent(ui.content_region_avail()),
+            ViewKind::StashEntry(area) => {
+                ui.set_cursor_screen_pos(area.min);
+                panel_extent([area.max[0] - area.min[0], area.max[1] - area.min[1]])
+            },
+        };
+        *size = extent;
+        camera.resize(extent.0, extent.1);
+        if *refit {
+            let (width, height) = session.extent_px_of(id);
+            camera.frame_map(width, height);
+            *refit = false;
+        }
+
+        *visible = true;
+
+        let scale = ui.io().display_framebuffer_scale();
+        *rect = framebuffer_rect(ui.cursor_screen_pos(), image_size, scale, ui.io().display_size());
+        ui.image(Renderer::map_view_texture(index), image_size);
+
+        let is_image_hovered = ui.is_item_hovered();
+        let layout = ViewLayout::new(ui, extent, scale, kind);
+        let mouse = ui.io().mouse_pos();
+        let mut frame = ViewFrame {
+            id,
+            kind,
+            camera,
+            refit,
+            gestures,
+            blame_popup,
+            context,
+            interaction,
+            layout,
+            mouse,
+            is_active: session.state.active() == Some(id),
+            is_focused: ui.is_window_focused(),
+            is_pointed: is_image_hovered
+                && !layout.top_overlay.contains(mouse)
+                && !layout.bottom_overlay.contains(mouse),
+            is_hovered: false,
+            cursor: None,
+            coord: None,
+        };
+
+        let comment_hit = hit_comment(ui, session, &frame);
+        frame.is_hovered = frame.is_pointed && comment_hit.is_none() && frame.is_active;
+        let is_drag_panning = frame.is_hovered && settings.keybindings.get(KeybindAction::PanDrag).is_held(ui);
+        self.release_momentary_tool(ui, session, frame.is_hovered && !is_drag_panning);
+        choose_recent_on_key(ui, session, settings, frame.is_focused);
+
+        if kind == ViewKind::Map && frame.is_hovered && !ui.io().want_text_input() {
+            self.pan_and_zoom(ui, settings, &mut frame, is_drag_panning);
+            self.apply_view_shortcuts(ui, session, settings, frame.refit);
+            if *frame.refit {
+                let (width, height) = session.extent_px();
+                frame.camera.frame_map(width, height);
+                *frame.refit = false;
+            }
+        }
+
+        frame.is_hovered &= !is_drag_panning;
+        self.draw_view_overlays(ui, session, settings, &frame, *hovered_coord, guide_badges);
+        self.draw_coop_overlays(ui, session, &frame, comment_hit);
+
+        let is_over_blame_popup = frame
+            .blame_popup
+            .as_ref()
+            .and_then(|popup| popup.bounds)
+            .is_some_and(|bounds| bounds.contains(mouse));
+        frame.resolve_cursor(session, is_over_blame_popup);
+        *hovered_coord = frame.coord;
+        share_presence(session, &frame, coop);
+
+        let is_blame_capturing = draw_tile_hover(ui, session, &mut frame, is_over_blame_popup);
+        update_prefab_menu(ui, session, settings, id, frame.is_focused, prefab_menu, &mut self.find);
+        let node_hit = draw_node_hit(ui, session, &frame);
+        configure_tool_interaction(session.tool(), frame.interaction);
+        self.toggle_focus_on_key(ui, session, settings, &frame);
+
+        if frame.is_active {
+            self.draw_active_map(ui, session, settings, &mut frame, &node_hit, is_blame_capturing);
+        }
     }
 
     fn activate_on_focus(
@@ -653,8 +785,11 @@ impl UiState {
         self.apply_map_menu(ui, session, settings, frame);
 
         self.draw_conflict_overlay_controls(ui, session, frame, &conflict_hunks);
-        self.draw_top_overlays(ui, session, settings, frame);
-        draw_recent_prefabs(ui, session, settings, frame);
+        if frame.kind == ViewKind::Map {
+            self.draw_top_overlays(ui, session, settings, frame);
+            draw_recent_prefabs(ui, session, settings, frame);
+        }
+
         configure_tool_interaction(session.tool(), frame.interaction);
         draw_fill_limit_warning(
             ui,

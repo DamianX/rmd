@@ -2793,13 +2793,46 @@ impl Evaluator<'_> {
             .tree
             .id_of(&path)
             .ok_or_else(|| self.fault(FaultKind::InvalidOperation(format!("unknown type {path}"))))?;
-        self.reserve(1)?;
+        let is_turf = self
+            .tree
+            .roots()
+            .turf
+            .is_some_and(|turf| self.tree.is_subtype_of(ty, turf));
+        let replaced = args
+            .first()
+            .and_then(|(_, value)| value.object())
+            .filter(|_| is_turf)
+            .filter(|old| {
+                self.runtime
+                    .heap
+                    .object(*old)
+                    .is_some_and(|object| object.position.is_some())
+            });
 
-        let id = self
-            .runtime
-            .heap
-            .alloc_object(Object::new(ty))
-            .map_err(|kind| self.fault(kind))?;
+        // BYOND replaces a turf where it stands, so refs to it see the new type after the old one's Del()
+        let id = match replaced {
+            Some(old) => {
+                let old_type = self.runtime.heap.object(old).map(|object| object.ty);
+                if let Some(proc) = old_type.and_then(|old_type| self.find_proc(old_type, &"Del".into())) {
+                    self.call_function_for_proc(proc, Src::Object(old), None, Vec::new())?;
+                }
+
+                self.runtime
+                    .heap
+                    .replace_turf(old, ty)
+                    .map_err(|kind| self.fault(kind))?;
+
+                old
+            },
+            None => {
+                self.reserve(1)?;
+
+                self.runtime
+                    .heap
+                    .alloc_object(Object::new(ty))
+                    .map_err(|kind| self.fault(kind))?
+            },
+        };
 
         for (name, value) in overrides {
             self.write_field(GenericValue::Object(id), name, value)?;

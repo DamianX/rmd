@@ -317,6 +317,14 @@ impl Heap {
         Ok(())
     }
 
+    pub fn replace_turf(&mut self, id: ObjectId, ty: TypeId) -> Result<(), FaultKind> {
+        let object = self.object_mut(id)?;
+        object.ty = ty;
+        object.vars = SymbolMap::default();
+
+        Ok(())
+    }
+
     /// Deletes descendants created by runtime code, while leaving map placements to be relinked.
     pub(crate) fn delete_unplaced_contents(&mut self, parent: ObjectId) -> Result<(), FaultKind> {
         let mut pending = self

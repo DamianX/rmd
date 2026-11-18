@@ -4813,6 +4813,65 @@ fn json_encode_faults_past_the_depth_limit() {
     assert_eq!(fault.kind, FaultKind::Memory);
 }
 
+fn bake_with_a_turf_under_a_probe(profile: &str) -> (ObjectTree, Bake) {
+    let (tree, module) = compile(fixture!("programs/new_turf_replaces_the_turf_in_place.dm"));
+    let atom = |instance, path: &str, vars| Atom {
+        instance,
+        ty: tree.id_of(&TreePath::parse(path)).unwrap(),
+        position: Position::new(1, 1, 1),
+        vars,
+    };
+    let atoms = vec![
+        atom(1, "/turf/a", vec![("shared".into(), Value::Text("atom".into()))]),
+        atom(2, "/area/zone", Vec::new()),
+        atom(3, "/obj/probe", Vec::new()),
+    ];
+    let bake = Bake::new_with_profile(
+        &tree,
+        &module,
+        profile_at(&tree, profile),
+        atoms,
+        [1, 1, 1],
+        Limits::default(),
+        IconStates::default(),
+        None,
+    );
+    assert_eq!(bake.diagnostics.count(), 0, "{:?}", bake.diagnostics);
+
+    (tree, bake)
+}
+
+#[test]
+fn new_turf_replaces_the_turf_in_place() {
+    let (_, bake) = bake_with_a_turf_under_a_probe("/datum/demir/replace");
+
+    assert_eq!(baked_state(&bake, 3), Some("1-1-b-ran-1-1-1-/turf/a"));
+}
+
+#[test]
+fn a_rolled_back_turf_replacement_restores_the_old_turf() {
+    let (tree, bake) = bake_with_a_turf_under_a_probe("/datum/demir/replace");
+
+    let turf = bake.object(1).unwrap();
+    assert_eq!(bake.runtime.world.turf_at(Position::new(1, 1, 1)), Some(turf));
+    let object = bake.runtime.heap.object(turf).unwrap();
+    assert_eq!(object.ty, tree.id_of(&TreePath::parse("/turf/a")).unwrap());
+    assert_eq!(
+        object.vars.get(&"shared".into()),
+        Some(&GenericValue::Text("atom".into()))
+    );
+    assert_eq!(object.vars.get(&"set_in_new".into()), None);
+    assert_eq!(object.contents, [bake.object(3).unwrap()]);
+    assert_eq!(object.loc, bake.object(2));
+}
+
+#[test]
+fn new_turf_without_a_turf_on_the_map_allocates_a_new_object() {
+    let (_, bake) = bake_with_a_turf_under_a_probe("/datum/demir/ignored");
+
+    assert_eq!(baked_state(&bake, 3), Some("0-0-1-atom-1-1-"));
+}
+
 #[test]
 fn modules_are_inserted_before_atom_hooks() {
     let (tree, module) = compile(fixture!("programs/modules_are_inserted_before_atom_hooks.dm"));

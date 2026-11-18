@@ -10,7 +10,7 @@ use std::{
 };
 
 use dmi::{
-    IconFile,
+    IconFile, IconInfo,
     metadata::{IconState, Metadata},
 };
 use dmm::{Map, MapFormat, Size, writer::MapWriter};
@@ -266,24 +266,34 @@ fn reloading_an_environment_resets_type_visibility() {
 fn icon_session(path: &str, states: &[(&str, bool)]) -> Session {
     let mut tree = ObjectTree::new();
     tree.register(&TreePath::parse(path), Location::default());
-    let mut environment = Environment::new(".", tree);
-    environment.icons.insert(
-        String::from("sign.dmi"),
-        Metadata {
-            states: states
-                .iter()
-                .map(|(name, movement)| IconState {
-                    name: name.to_string(),
-                    dirs: 1,
-                    frames: 1,
-                    movement: *movement,
-                    ..Default::default()
-                })
-                .collect(),
-            ..Default::default()
-        },
-    );
+    let environment = Environment::new(".", tree);
     let mut session = Session::new();
+    session
+        .textures
+        .insert_info(
+            "sign.dmi",
+            &IconInfo {
+                path: PathBuf::new(),
+                metadata: Metadata {
+                    width: 32,
+                    height: 32,
+                    states: states
+                        .iter()
+                        .map(|(name, movement)| IconState {
+                            name: name.to_string(),
+                            dirs: 1,
+                            frames: 1,
+                            movement: *movement,
+                            ..Default::default()
+                        })
+                        .collect(),
+                    ..Default::default()
+                },
+                sheet_width: 0,
+                sheet_height: 0,
+            },
+        )
+        .unwrap();
     session.state.environment = Some(Arc::new(environment));
 
     session

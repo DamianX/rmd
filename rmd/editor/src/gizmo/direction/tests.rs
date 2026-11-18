@@ -4,9 +4,12 @@ use base::{
     path::TreePath,
     types::{Identifier, Value},
 };
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
-use dmi::metadata::{Dir, IconState, Metadata};
+use dmi::{
+    IconInfo,
+    metadata::{Dir, IconState, Metadata},
+};
 use objtree::ObjectTree;
 use prefab::Prefab;
 
@@ -175,20 +178,30 @@ fn four_direction_session(paths: &[&str]) -> Session {
     for path in paths {
         tree.register(&TreePath::parse(path), Location::default());
     }
-    let mut environment = Environment::new(".", tree);
-    environment.icons.insert(
-        String::from("four.dmi"),
-        Metadata {
-            states: vec![IconState {
-                name: String::from("four"),
-                dirs: 4,
-                frames: 1,
-                ..Default::default()
-            }],
-            ..Default::default()
-        },
-    );
+    let environment = Environment::new(".", tree);
     let mut session = Session::new();
+    session
+        .textures
+        .insert_info(
+            "four.dmi",
+            &IconInfo {
+                path: PathBuf::new(),
+                metadata: Metadata {
+                    width: 32,
+                    height: 32,
+                    states: vec![IconState {
+                        name: String::from("four"),
+                        dirs: 4,
+                        frames: 1,
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+                sheet_width: 0,
+                sheet_height: 0,
+            },
+        )
+        .unwrap();
     session.state.environment = Some(Arc::new(environment));
 
     session

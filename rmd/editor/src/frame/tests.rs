@@ -316,7 +316,6 @@ fn hidden_types_keep_their_sprites_flagged() {
     let coord = Coord::new(1, 1, 1);
     let object_owner = document.instance_ids_at(coord)[0];
     let area_owner = document.instance_ids_at(coord)[1];
-    let icons = icons(&["floor", "table"]);
     let textures = textures(&["floor", "table"]);
     let object = tree.id_of(&TreePath::parse("/obj")).unwrap();
     let area = tree.id_of(&TreePath::parse("/area")).unwrap();
@@ -325,7 +324,6 @@ fn hidden_types_keep_their_sprites_flagged() {
     visibility.set_subtree(&tree, object, false);
     let without_objects = build_with_options(
         &tree,
-        &icons,
         &textures,
         &document,
         FrameRenderOptions {
@@ -355,7 +353,6 @@ fn hidden_types_keep_their_sprites_flagged() {
     visibility.set_subtree(&tree, area, false);
     let without_areas = build_with_options(
         &tree,
-        &icons,
         &textures,
         &document,
         FrameRenderOptions {
@@ -402,12 +399,9 @@ fn side_options<'a>(
     }
 }
 
-fn build_side(
-    tree: &ObjectTree, icons: &HashMap<String, Metadata>, textures: &TextureCatalog, document: &MapDocument,
-) -> FrameInstances {
+fn build_side(tree: &ObjectTree, textures: &TextureCatalog, document: &MapDocument) -> FrameInstances {
     build_with_options(
         tree,
-        icons,
         textures,
         document,
         side_options(&TypeVisibility::default(), &HashMap::new()),
@@ -417,10 +411,10 @@ fn build_side(
 fn drawn_owners(
     tree: &ObjectTree, document: &MapDocument, perspective: Perspective, among: &[PrefabInstanceId],
 ) -> Vec<PrefabInstanceId> {
-    let (icons, textures) = (icons(&["floor", "table"]), textures(&["floor", "table"]));
+    let textures = textures(&["floor", "table"]);
     let instances = match perspective {
-        Perspective::Side => build_side(tree, &icons, &textures, document),
-        Perspective::TopDown => build(tree, &icons, &textures, document, 32),
+        Perspective::Side => build_side(tree, &textures, document),
+        Perspective::TopDown => build(tree, &textures, document, 32),
     };
     instances
         .live_sprites()
@@ -533,8 +527,8 @@ fn side_map_updates_keep_the_keys_of_a_rebuild_when_an_owner_changes_rows() {
         (1, prefab_with("/obj/low", &[])),
     ]);
     let mut document = document(map);
-    let (icons, textures) = (icons(&["floor", "table"]), textures(&["floor", "table"]));
-    let mut instances = build_side(&tree, &icons, &textures, &document);
+    let textures = textures(&["floor", "table"]);
+    let mut instances = build_side(&tree, &textures, &document);
     let (back, near) = (owner_at(&document, 2), owner_at(&document, 1));
 
     for pixel_y in [-64.0, 0.0, 32.0] {
@@ -549,13 +543,12 @@ fn side_map_updates_keep_the_keys_of_a_rebuild_when_an_owner_changes_rows() {
         update_prefabs_with_options(
             &mut instances,
             &tree,
-            &icons,
             &textures,
             &document,
             &[back],
             side_options(&TypeVisibility::default(), &HashMap::new()),
         );
-        assert_render_data_matches(&instances, &build_side(&tree, &icons, &textures, &document));
+        assert_render_data_matches(&instances, &build_side(&tree, &textures, &document));
 
         let order = instances
             .live_sprites()
@@ -575,10 +568,9 @@ fn a_shown_area_draws_above_emissive_blockers() {
     map.grid[0][0][0] = map.intern_tile(vec![door, Prefab::new(TreePath::parse("/area/station"))]);
     let document = document(map);
     let owners = document.instance_ids_at(Coord::new(1, 1, 1));
-    let icons = icons(&["floor", "table"]);
     let textures = textures(&["floor", "table"]);
 
-    let instances = build(&tree, &icons, &textures, &document, 32);
+    let instances = build(&tree, &textures, &document, 32);
     let drawn = instances
         .live_sprites()
         .filter(|sprite| sprite.area_edges == 0)
@@ -603,10 +595,9 @@ fn only_turfs_with_mouse_opacity_zero_are_click_through() {
     map.grid[0][0][0] = map.intern_tile(tile);
     let document = document(map);
     let owners = document.instance_ids_at(Coord::new(1, 1, 1));
-    let icons = icons(&["floor", "table"]);
     let textures = textures(&["floor", "table"]);
 
-    let instances = build(&tree, &icons, &textures, &document, 32);
+    let instances = build(&tree, &textures, &document, 32);
     let click_through = |owner| {
         instances
             .live_sprites()
@@ -672,10 +663,6 @@ fn layered_map(levels: &[&str]) -> Map {
     map
 }
 
-pub(super) fn icons(states: &[&str]) -> HashMap<String, Metadata> {
-    HashMap::from([(String::from(ICON), metadata(states))])
-}
-
 pub(super) fn textures(states: &[&str]) -> TextureCatalog {
     let mut textures = TextureCatalog::new();
     textures.insert(ICON, &icon_file(states)).expect("insert");
@@ -720,13 +707,7 @@ fn orders_sprites_by_layer_not_by_prefab_order() {
     let document = document(one_tile_map(&["/obj/table", "/turf/floor"]));
     let owners = document.instance_ids_at(Coord::new(1, 1, 1));
 
-    let instances = build(
-        &tree,
-        &icons(&["floor", "table"]),
-        &textures(&["floor", "table"]),
-        &document,
-        32,
-    );
+    let instances = build(&tree, &textures(&["floor", "table"]), &document, 32);
     let sprites = drawn(&instances);
 
     assert_eq!(sprites.len(), 2);
@@ -745,7 +726,6 @@ fn orders_sprites_by_layer_not_by_prefab_order() {
 #[test]
 fn large_equal_layer_decals_draw_above_surrounding_turfs() {
     let tree = tree(&[("/turf/floor", "floor", 2.0), ("/obj/decal", "decal", 2.0)]);
-    let mut icons = icons(&["floor", "decal"]);
     let mut textures = textures(&["floor", "decal"]);
     let mut decal_icon = icon_file(&["decal"]);
     decal_icon.metadata.width = 96;
@@ -753,7 +733,6 @@ fn large_equal_layer_decals_draw_above_surrounding_turfs() {
     decal_icon.sheet_width = 96;
     decal_icon.sheet_height = 96;
     decal_icon.pixels = vec![255; 96 * 96 * 4];
-    icons.insert("large.dmi".into(), decal_icon.metadata.clone());
     textures.insert("large.dmi", &decal_icon).unwrap();
 
     let mut map = area_map(5, 5, "/turf/floor");
@@ -763,7 +742,7 @@ fn large_equal_layer_decals_draw_above_surrounding_turfs() {
     map.grid[0][2][2] = key;
     let mut document = document(map);
     let owner = document.instance_ids_at(Coord::new(3, 3, 1))[0];
-    let mut instances = build(&tree, &icons, &textures, &document, 32);
+    let mut instances = build(&tree, &textures, &document, 32);
 
     for (pixel_x, pixel_y) in [(0.0, 0.0), (-7.0, -9.0)] {
         document
@@ -777,8 +756,8 @@ fn large_equal_layer_decals_draw_above_surrounding_turfs() {
                 None,
             )
             .unwrap();
-        update_prefab(&mut instances, &tree, &icons, &textures, &document, owner, 32);
-        assert_render_data_matches(&instances, &build(&tree, &icons, &textures, &document, 32));
+        update_prefab(&mut instances, &tree, &textures, &document, owner, 32);
+        assert_render_data_matches(&instances, &build(&tree, &textures, &document, 32));
         let sprites = drawn(&instances);
         assert_eq!(sprites.len(), 26);
         assert_eq!(sprites.last().unwrap().owner, owner, "all floors draw before the decal");
@@ -821,7 +800,6 @@ fn equal_layer_overlays_and_underlays_keep_their_owners_turf_priority() {
     );
     let instances = build_with_options(
         &tree,
-        &icons(&["floor", "decal", "underlay", "overlay"]),
         &textures(&["floor", "decal", "underlay", "overlay"]),
         &document,
         FrameRenderOptions {
@@ -862,13 +840,7 @@ fn explicit_planes_take_priority_over_equal_layer_turf_order() {
         document
             .set_instance_var(owners[0], "plane".into(), Value::Num(plane))
             .unwrap();
-        let instances = build(
-            &tree,
-            &icons(&["floor", "decal"]),
-            &textures(&["floor", "decal"]),
-            &document,
-            32,
-        );
+        let instances = build(&tree, &textures(&["floor", "decal"]), &document, 32);
         assert_eq!(
             drawn(&instances).iter().map(|sprite| sprite.owner).collect::<Vec<_>>(),
             expected
@@ -884,7 +856,6 @@ fn fractional_decal_layers_survive_edits_and_undo() {
         ("/obj/equal", "equal", 2.0),
         ("/turf/floor", "floor", 2.0),
     ]);
-    let icons = icons(&["floor", "decal", "fine", "equal"]);
     let textures = textures(&["floor", "decal", "fine", "equal"]);
     let mut document = document(one_tile_map(&[
         "/obj/decal",
@@ -898,7 +869,7 @@ fn fractional_decal_layers_survive_edits_and_undo() {
             .set_instance_var(*owner, "plane".into(), Value::Num(-13.0))
             .unwrap();
     }
-    let mut instances = build(&tree, &icons, &textures, &document, 32);
+    let mut instances = build(&tree, &textures, &document, 32);
     let before = drawn(&instances);
     assert_eq!(
         before.iter().map(|sprite| sprite.owner).collect::<Vec<_>>(),
@@ -908,16 +879,16 @@ fn fractional_decal_layers_survive_edits_and_undo() {
     document
         .set_instance_var(owners[0], "layer".into(), Value::Num(1.999))
         .unwrap();
-    update_prefab(&mut instances, &tree, &icons, &textures, &document, owners[0], 32);
+    update_prefab(&mut instances, &tree, &textures, &document, owners[0], 32);
     assert_eq!(drawn(&instances)[0].owner, owners[0]);
-    let rebuilt = build(&tree, &icons, &textures, &document, 32);
+    let rebuilt = build(&tree, &textures, &document, 32);
     assert_eq!(drawn(&instances), drawn(&rebuilt));
     assert_render_data_matches(&instances, &rebuilt);
 
     document.undo_with_affected().expect("undo decal layer edit");
-    update_prefab(&mut instances, &tree, &icons, &textures, &document, owners[0], 32);
+    update_prefab(&mut instances, &tree, &textures, &document, owners[0], 32);
     assert_eq!(drawn(&instances), before);
-    let rebuilt = build(&tree, &icons, &textures, &document, 32);
+    let rebuilt = build(&tree, &textures, &document, 32);
     assert_eq!(drawn(&instances), drawn(&rebuilt));
     assert_render_data_matches(&instances, &rebuilt);
 }
@@ -947,7 +918,6 @@ fn fractional_overlay_layers_sort_across_placements() {
     )]));
     let instances = build_with_options(
         &tree,
-        &icons(&["floor", "decal", "overlay"]),
         &textures(&["floor", "decal", "overlay"]),
         &document,
         FrameRenderOptions {
@@ -994,7 +964,6 @@ fn an_overlay_plane_sorts_across_unrelated_placements() {
 
     let instances = build_with_options(
         &tree,
-        &icons(&["floor", "table", "light"]),
         &textures(&["floor", "table", "light"]),
         &document,
         FrameRenderOptions {
@@ -1047,7 +1016,6 @@ fn keep_together_keeps_explicit_plane_overlays_with_their_owner() {
 
     let instances = build_with_options(
         &tree,
-        &icons(&["floor", "table", "light"]),
         &textures(&["floor", "table", "light"]),
         &document,
         FrameRenderOptions {
@@ -1096,7 +1064,6 @@ fn keep_apart_restores_global_plane_order_inside_keep_together() {
 
     let instances = build_with_options(
         &tree,
-        &icons(&["floor", "table", "light"]),
         &textures(&["floor", "table", "light"]),
         &document,
         FrameRenderOptions {
@@ -1146,11 +1113,9 @@ fn visible_prefabs_with_failed_icon_lookups_use_the_missing_texture() {
     document
         .set_instance_var(owners[4], "alpha".into(), Value::Num(0.0))
         .unwrap();
-
-    let icons = icons(&["valid"]);
     let mut textures = textures(&["valid"]);
     let missing = textures.insert_missing_icon().unwrap();
-    let instances = build(&tree, &icons, &textures, &document, 32);
+    let instances = build(&tree, &textures, &document, 32);
 
     assert_eq!(
         instances.sprite(owners[0]).unwrap().texture,
@@ -1167,7 +1132,6 @@ fn visible_prefabs_with_failed_icon_lookups_use_the_missing_texture() {
     visibility.set_subtree(&tree, monitor, false);
     let hidden = build_with_options(
         &tree,
-        &icons,
         &textures,
         &document,
         FrameRenderOptions {
@@ -1215,12 +1179,10 @@ fn failed_overlays_do_not_cover_a_valid_airlock_or_overlay_only_object() {
             },
         ),
     ]));
-    let icons = icons(&["closed"]);
     let mut textures = textures(&["closed"]);
     let missing = textures.insert_missing_icon().unwrap();
     let rendered = build_with_options(
         &tree,
-        &icons,
         &textures,
         &document,
         FrameRenderOptions {
@@ -1275,7 +1237,6 @@ fn sprite_textures_use_the_resolved_direction_and_first_frame() {
         sheet_height: 32,
         pixels: vec![255; 32 * 8 * 32 * 4],
     };
-    let icons = HashMap::from([(String::from(ICON), metadata)]);
     let mut textures = TextureCatalog::new();
     textures.insert(ICON, &file).expect("insert directional icon");
     let appearance = Appearance {
@@ -1285,7 +1246,7 @@ fn sprite_textures_use_the_resolved_direction_and_first_frame() {
         ..Default::default()
     };
 
-    let texture = super::sprite_texture(&icons, &textures, &appearance).expect("east thumbnail");
+    let texture = super::sprite_texture(&textures, &appearance).expect("east thumbnail");
 
     assert_eq!(texture.source_position, [64, 0]);
     assert_eq!(texture, textures.lookup(ICON, 2).unwrap());
@@ -1294,11 +1255,10 @@ fn sprite_textures_use_the_resolved_direction_and_first_frame() {
 #[test]
 fn prefab_updates_touch_only_the_changed_sprite_and_preserve_sorting() {
     let tree = tree(&[("/turf/floor", "floor", 2.0), ("/obj/table", "table", 3.0)]);
-    let icons = icons(&["floor", "table"]);
     let textures = textures(&["floor", "table"]);
     let mut document = document(one_tile_map(&["/turf/floor", "/obj/table"]));
     let owner = document.instance_ids_at(Coord::new(1, 1, 1))[1];
-    let mut instances = build(&tree, &icons, &textures, &document, 32);
+    let mut instances = build(&tree, &textures, &document, 32);
     let before = drawn(&instances);
     // the map's one level fits in one page, which is what every change uploads
     let page = PrefabUpdate::Buffers {
@@ -1312,7 +1272,7 @@ fn prefab_updates_touch_only_the_changed_sprite_and_preserve_sorting() {
         .set_instance_var(owner, "pixel_x".into(), Value::Num(7.0))
         .unwrap();
     assert_eq!(
-        update_prefab(&mut instances, &tree, &icons, &textures, &document, owner, 32),
+        update_prefab(&mut instances, &tree, &textures, &document, owner, 32),
         page
     );
     assert_eq!(drawn(&instances)[0], before[0]);
@@ -1322,7 +1282,7 @@ fn prefab_updates_touch_only_the_changed_sprite_and_preserve_sorting() {
         .set_instance_var(owner, "name".into(), Value::Text("renamed".into()))
         .unwrap();
     assert_eq!(
-        update_prefab(&mut instances, &tree, &icons, &textures, &document, owner, 32),
+        update_prefab(&mut instances, &tree, &textures, &document, owner, 32),
         PrefabUpdate::Unchanged,
     );
 
@@ -1330,7 +1290,7 @@ fn prefab_updates_touch_only_the_changed_sprite_and_preserve_sorting() {
         .set_instance_var(owner, "layer".into(), Value::Num(1.0))
         .unwrap();
     assert_eq!(
-        update_prefab(&mut instances, &tree, &icons, &textures, &document, owner, 32),
+        update_prefab(&mut instances, &tree, &textures, &document, owner, 32),
         page
     );
     assert_eq!(drawn(&instances)[0].owner, owner);
@@ -1339,7 +1299,7 @@ fn prefab_updates_touch_only_the_changed_sprite_and_preserve_sorting() {
         .set_instance_var(owner, "icon".into(), Value::Resource("missing.dmi".into()))
         .unwrap();
     assert_eq!(
-        update_prefab(&mut instances, &tree, &icons, &textures, &document, owner, 32),
+        update_prefab(&mut instances, &tree, &textures, &document, owner, 32),
         page
     );
     assert_eq!(drawn(&instances).len(), 1);
@@ -1348,60 +1308,57 @@ fn prefab_updates_touch_only_the_changed_sprite_and_preserve_sorting() {
 #[test]
 fn area_identity_edits_repair_components_and_cached_buffers() {
     let tree = tree(&[("/area/station", "floor", 1.0)]);
-    let icons = icons(&["floor"]);
     let textures = textures(&["floor"]);
     let mut document = document(area_map(5, 5, "/area/station"));
     let owner = document.instance_ids_at(Coord::new(3, 3, 1))[0];
-    let mut instances = build(&tree, &icons, &textures, &document, 32);
+    let mut instances = build(&tree, &textures, &document, 32);
 
     document
         .set_instance_var(owner, "name".into(), Value::Text(String::from("Engineering")))
         .unwrap();
-    let update = update_prefab(&mut instances, &tree, &icons, &textures, &document, owner, 32);
+    let update = update_prefab(&mut instances, &tree, &textures, &document, owner, 32);
     assert!(matches!(update, PrefabUpdate::Buffers { ref sprites, .. } if !sprites.is_empty()));
-    assert_render_data_matches(&instances, &build(&tree, &icons, &textures, &document, 32));
+    assert_render_data_matches(&instances, &build(&tree, &textures, &document, 32));
 
     document
         .set_instance_var(owner, "name".into(), Value::Text(String::from("Bridge")))
         .unwrap();
     assert_eq!(
-        update_prefab(&mut instances, &tree, &icons, &textures, &document, owner, 32),
+        update_prefab(&mut instances, &tree, &textures, &document, owner, 32),
         PrefabUpdate::Unchanged,
     );
-    assert_render_data_matches(&instances, &build(&tree, &icons, &textures, &document, 32));
+    assert_render_data_matches(&instances, &build(&tree, &textures, &document, 32));
 
     document
         .edit_instance_vars(owner, "reset name", &[VarMutation::Remove("name".into())], None)
         .unwrap();
-    let update = update_prefab(&mut instances, &tree, &icons, &textures, &document, owner, 32);
+    let update = update_prefab(&mut instances, &tree, &textures, &document, owner, 32);
     assert!(matches!(update, PrefabUpdate::Buffers { ref sprites, .. } if !sprites.is_empty()));
-    assert_render_data_matches(&instances, &build(&tree, &icons, &textures, &document, 32));
+    assert_render_data_matches(&instances, &build(&tree, &textures, &document, 32));
 }
 
 #[test]
 fn area_icon_edits_patch_the_sprite_buffer() {
     let tree = tree(&[("/area/station", "floor", 1.0)]);
-    let icons = icons(&["floor", "alert"]);
     let textures = textures(&["floor", "alert"]);
     let mut document = document(one_tile_map(&["/area/station"]));
     let owner = document.instance_ids_at(Coord::new(1, 1, 1))[0];
-    let mut instances = build(&tree, &icons, &textures, &document, 32);
+    let mut instances = build(&tree, &textures, &document, 32);
 
     document
         .set_instance_var(owner, "icon_state".into(), Value::Text(String::from("alert")))
         .unwrap();
-    let update = update_prefab(&mut instances, &tree, &icons, &textures, &document, owner, 32);
+    let update = update_prefab(&mut instances, &tree, &textures, &document, owner, 32);
     assert!(matches!(
         update,
         PrefabUpdate::Buffers { ref sprites } if !sprites.is_empty()
     ));
-    assert_render_data_matches(&instances, &build(&tree, &icons, &textures, &document, 32));
+    assert_render_data_matches(&instances, &build(&tree, &textures, &document, 32));
 }
 
 #[test]
 fn moving_an_area_repairs_components_and_cached_buffers() {
     let tree = tree(&[("/area/station", "floor", 1.0)]);
-    let icons = icons(&["floor"]);
     let textures = textures(&["floor"]);
     let mut map = Map::new(Size { x: 3, y: 1, z: 1 });
     map.intern_tile(Vec::new());
@@ -1409,50 +1366,49 @@ fn moving_an_area_repairs_components_and_cached_buffers() {
     map.grid[0][0][0] = area;
     let mut document = document(map);
     let owner = document.instance_ids_at(Coord::new(1, 1, 1))[0];
-    let mut instances = build(&tree, &icons, &textures, &document, 32);
+    let mut instances = build(&tree, &textures, &document, 32);
 
     document
         .move_instance(&tree, owner, Coord::new(2, 1, 1), "move area", &[], None)
         .unwrap();
-    let update = update_prefab(&mut instances, &tree, &icons, &textures, &document, owner, 32);
+    let update = update_prefab(&mut instances, &tree, &textures, &document, owner, 32);
     assert!(matches!(
         update,
         PrefabUpdate::Buffers { ref sprites } if !sprites.is_empty()
     ));
-    assert_render_data_matches(&instances, &build(&tree, &icons, &textures, &document, 32));
+    assert_render_data_matches(&instances, &build(&tree, &textures, &document, 32));
 
     document
         .set_instance_var(owner, "name".into(), Value::Text(String::from("Moved")))
         .unwrap();
-    update_prefab(&mut instances, &tree, &icons, &textures, &document, owner, 32);
-    assert_render_data_matches(&instances, &build(&tree, &icons, &textures, &document, 32));
+    update_prefab(&mut instances, &tree, &textures, &document, owner, 32);
+    assert_render_data_matches(&instances, &build(&tree, &textures, &document, 32));
 }
 
 #[test]
 fn changing_between_area_and_object_repairs_cached_buffers() {
     let tree = tree(&[("/area/station", "floor", 1.0), ("/obj/table", "table", 2.0)]);
-    let icons = icons(&["floor", "table"]);
     let textures = textures(&["floor", "table"]);
     let mut document = document(one_tile_map(&["/area/station"]));
     let owner = document.instance_ids_at(Coord::new(1, 1, 1))[0];
-    let mut instances = build(&tree, &icons, &textures, &document, 32);
+    let mut instances = build(&tree, &textures, &document, 32);
 
     document
         .replace_instance_path(owner, "make object", TreePath::parse("/obj/table"), &[], None)
         .unwrap();
-    let update = update_prefab(&mut instances, &tree, &icons, &textures, &document, owner, 32);
+    let update = update_prefab(&mut instances, &tree, &textures, &document, owner, 32);
     assert!(matches!(
         update,
         PrefabUpdate::Buffers { ref sprites } if !sprites.is_empty()
     ));
     assert!(instances.live_sprites().all(|sprite| !sprite.is_area));
-    assert_render_data_matches(&instances, &build(&tree, &icons, &textures, &document, 32));
+    assert_render_data_matches(&instances, &build(&tree, &textures, &document, 32));
 
     document
         .replace_instance_path(owner, "make area", TreePath::parse("/area/station"), &[], None)
         .unwrap();
-    update_prefab(&mut instances, &tree, &icons, &textures, &document, owner, 32);
-    assert_render_data_matches(&instances, &build(&tree, &icons, &textures, &document, 32));
+    update_prefab(&mut instances, &tree, &textures, &document, owner, 32);
+    assert_render_data_matches(&instances, &build(&tree, &textures, &document, 32));
 }
 
 #[test]
@@ -1461,9 +1417,9 @@ fn includes_normal_area_sprites_and_separate_outlines() {
     let mut document = document(one_tile_map(&["/turf/floor", "/area/station"]));
     let turf_owner = document.instance_ids_at(Coord::new(1, 1, 1))[0];
     let area_owner = document.instance_ids_at(Coord::new(1, 1, 1))[1];
-    let (icons, textures) = (icons(&["floor"]), textures(&["floor"]));
+    let textures = textures(&["floor"]);
 
-    let mut instances = build(&tree, &icons, &textures, &document, 32);
+    let mut instances = build(&tree, &textures, &document, 32);
     let sprites = drawn(&instances);
 
     assert_eq!(sprites.len(), 3);
@@ -1485,16 +1441,16 @@ fn includes_normal_area_sprites_and_separate_outlines() {
     document
         .set_instance_var(turf_owner, "layer".into(), Value::Num(0.0))
         .unwrap();
-    update_prefab(&mut instances, &tree, &icons, &textures, &document, turf_owner, 32);
+    update_prefab(&mut instances, &tree, &textures, &document, turf_owner, 32);
     assert_eq!(instances.sprite(area_owner).unwrap().area_edges, 0);
 }
 
 #[test]
 fn matching_area_tiles_only_draw_the_outer_perimeter() {
     let tree = tree(&[("/area/station", "floor", 1.0)]);
-    let (icons, textures) = (icons(&["floor"]), textures(&["floor"]));
+    let textures = textures(&["floor"]);
 
-    let instances = build(&tree, &icons, &textures, &document(area_map(3, 3, "/area/station")), 48);
+    let instances = build(&tree, &textures, &document(area_map(3, 3, "/area/station")), 48);
     let sprites = drawn(&instances);
 
     assert_eq!(sprites.len(), 9 + 8);
@@ -1538,9 +1494,9 @@ fn touching_different_areas_keep_both_sides_of_the_shared_edge() {
     let left = map.intern_tile(vec![Prefab::new(TreePath::parse("/area/one"))]);
     let right = map.intern_tile(vec![Prefab::new(TreePath::parse("/area/two"))]);
     map.grid[0][0] = vec![left, right];
-    let (icons, textures) = (icons(&["floor"]), textures(&["floor"]));
+    let textures = textures(&["floor"]);
 
-    let instances = build(&tree, &icons, &textures, &document(map), 32);
+    let instances = build(&tree, &textures, &document(map), 32);
     let sprites = drawn(&instances);
     let left = sprites
         .iter()
@@ -1558,9 +1514,9 @@ fn touching_different_areas_keep_both_sides_of_the_shared_edge() {
 #[test]
 fn matching_neighbors_remove_both_sides_of_the_shared_edge() {
     let tree = tree(&[("/area/station", "floor", 1.0)]);
-    let (icons, textures) = (icons(&["floor"]), textures(&["floor"]));
+    let textures = textures(&["floor"]);
 
-    let instances = build(&tree, &icons, &textures, &document(area_map(2, 1, "/area/station")), 32);
+    let instances = build(&tree, &textures, &document(area_map(2, 1, "/area/station")), 32);
     let sprites = drawn(&instances);
     let left = sprites
         .iter()
@@ -1585,9 +1541,9 @@ fn holes_receive_an_inner_perimeter() {
         row.fill(area);
     }
     map.grid[0][1][1] = empty;
-    let (icons, textures) = (icons(&["floor"]), textures(&["floor"]));
+    let textures = textures(&["floor"]);
 
-    let instances = build(&tree, &icons, &textures, &document(map), 32);
+    let instances = build(&tree, &textures, &document(map), 32);
     let sprites = drawn(&instances);
     let west_of_hole = sprites
         .iter()
@@ -1636,7 +1592,7 @@ fn area_components_join_cardinal_tiles_but_split_disconnected_regions_and_levels
     map.grid[1][0] = vec![station, station, other, station];
     let document = document(map);
 
-    let instances = build(&tree, &icons(&["floor"]), &textures(&["floor"]), &document, 32);
+    let instances = build(&tree, &textures(&["floor"]), &document, 32);
     let first = instances.area_component_at(Coord::new(1, 1, 1)).unwrap();
 
     assert_eq!(instances.area_component_at(Coord::new(2, 1, 1)), Some(first));
@@ -1648,19 +1604,18 @@ fn area_components_join_cardinal_tiles_but_split_disconnected_regions_and_levels
 #[test]
 fn deleting_an_area_splits_components_and_patches_cached_ranges() {
     let tree = tree(&[("/area/station", "floor", 1.0)]);
-    let icons = icons(&["floor"]);
     let textures = textures(&["floor"]);
     let mut document = document(area_map(3, 1, "/area/station"));
     let middle = Coord::new(2, 1, 1);
     let owner = document.instance_ids_at(middle)[0];
-    let mut instances = build(&tree, &icons, &textures, &document, 32);
+    let mut instances = build(&tree, &textures, &document, 32);
     let mut after = document.placed_tile(middle).unwrap();
     after.clear();
     let mut edit = Edit::new("delete middle area");
     edit.change(&document, middle, after);
     document.apply(edit);
 
-    let update = update_prefab(&mut instances, &tree, &icons, &textures, &document, owner, 32);
+    let update = update_prefab(&mut instances, &tree, &textures, &document, owner, 32);
 
     assert!(matches!(
         update,
@@ -1670,25 +1625,24 @@ fn deleting_an_area_splits_components_and_patches_cached_ranges() {
         instances.area_component_at(Coord::new(1, 1, 1)),
         instances.area_component_at(Coord::new(3, 1, 1))
     );
-    assert_render_data_matches(&instances, &build(&tree, &icons, &textures, &document, 32));
+    assert_render_data_matches(&instances, &build(&tree, &textures, &document, 32));
 }
 
 #[test]
 fn batched_area_deletions_produce_one_valid_buffer_update() {
     let tree = tree(&[("/area/station", "floor", 1.0)]);
-    let icons = icons(&["floor"]);
     let textures = textures(&["floor"]);
     let mut document = document(area_map(4, 1, "/area/station"));
     let coords = [Coord::new(2, 1, 1), Coord::new(3, 1, 1)];
     let owners = coords.map(|coord| document.instance_ids_at(coord)[0]);
-    let mut instances = build(&tree, &icons, &textures, &document, 32);
+    let mut instances = build(&tree, &textures, &document, 32);
     let mut edit = Edit::new("delete two areas");
     for coord in coords {
         edit.change(&document, coord, Vec::new());
     }
     document.apply(edit);
 
-    let update = update_prefabs(&mut instances, &tree, &icons, &textures, &document, &owners, 32);
+    let update = update_prefabs(&mut instances, &tree, &textures, &document, &owners, 32);
 
     let PrefabUpdate::Buffers { sprites } = update else {
         panic!("batched area deletion must stay incremental");
@@ -1699,7 +1653,7 @@ fn batched_area_deletions_produce_one_valid_buffer_update() {
             .iter()
             .all(|range| range.start <= range.end && range.end <= instances.sprites.len())
     );
-    assert_render_data_matches(&instances, &build(&tree, &icons, &textures, &document, 32));
+    assert_render_data_matches(&instances, &build(&tree, &textures, &document, 32));
 }
 
 #[test]
@@ -1711,13 +1665,7 @@ fn sprites_inherit_the_connected_area_at_their_anchor_tile() {
     let object_owner = document.instance_ids_at(coord)[0];
     let area_owner = document.instance_ids_at(coord)[1];
 
-    let instances = build(
-        &tree,
-        &icons(&["floor", "table"]),
-        &textures(&["floor", "table"]),
-        &document,
-        32,
-    );
+    let instances = build(&tree, &textures(&["floor", "table"]), &document, 32);
     let component = instances.area_component_at(coord);
 
     assert_eq!(instances.sprite(object_owner).unwrap().area_owner, component);
@@ -1735,7 +1683,7 @@ fn an_area_with_an_unresolvable_icon_still_gets_a_white_outline() {
     let tree = tree(&[("/area/station", "missing", 1.0)]);
     let document = document(one_tile_map(&["/area/station"]));
 
-    let instances = build(&tree, &icons(&["floor"]), &textures(&["floor"]), &document, 32);
+    let instances = build(&tree, &textures(&["floor"]), &document, 32);
     let sprites = drawn(&instances);
 
     assert_eq!(sprites.len(), 1);
@@ -1751,7 +1699,7 @@ fn an_unresolvable_icon_state_without_a_registered_fallback_emits_nothing() {
     let tree = tree(&[("/obj/ghost", "not_in_the_sheet", 2.0)]);
     let document = document(one_tile_map(&["/obj/ghost"]));
 
-    let instances = build(&tree, &icons(&["floor"]), &textures(&["floor"]), &document, 32);
+    let instances = build(&tree, &textures(&["floor"]), &document, 32);
     let sprites = drawn(&instances);
 
     assert!(sprites.is_empty());
@@ -1762,20 +1710,14 @@ fn an_unresolvable_icon_state_without_a_registered_fallback_emits_nothing() {
 fn a_prefab_with_no_type_in_the_tree_emits_nothing() {
     let document = document(one_tile_map(&["/obj/never/declared"]));
 
-    let instances = build(
-        &ObjectTree::new(),
-        &icons(&["floor"]),
-        &textures(&["floor"]),
-        &document,
-        32,
-    );
+    let instances = build(&ObjectTree::new(), &textures(&["floor"]), &document, 32);
     let sprites = drawn(&instances);
 
     assert!(sprites.is_empty());
 }
 
 /// `/turf/one` on z 1, `/turf/two` on z 2, `/turf/three` on z 3, one cell each.
-fn layered() -> (ObjectTree, HashMap<String, Metadata>, TextureCatalog, Map) {
+fn layered() -> (ObjectTree, TextureCatalog, Map) {
     let states = ["one", "two", "three"];
     let tree = tree(&[
         ("/turf/one", "one", 2.0),
@@ -1785,7 +1727,6 @@ fn layered() -> (ObjectTree, HashMap<String, Metadata>, TextureCatalog, Map) {
 
     (
         tree,
-        icons(&states),
         textures(&states),
         layered_map(&["/turf/one", "/turf/two", "/turf/three"]),
     )
@@ -1793,8 +1734,8 @@ fn layered() -> (ObjectTree, HashMap<String, Metadata>, TextureCatalog, Map) {
 
 #[test]
 fn builds_every_level_deepest_first() {
-    let (tree, icons, textures, map) = layered();
-    let instances = build(&tree, &icons, &textures, &document(map), 32);
+    let (tree, textures, map) = layered();
+    let instances = build(&tree, &textures, &document(map), 32);
     let sprites = drawn(&instances);
 
     assert_eq!(sprites.len(), 3);
@@ -1824,9 +1765,34 @@ fn tiles_land_on_pixel_positions_from_their_coordinates() {
         *slot = key;
     }
 
-    let instances = build(&tree, &icons(&["floor"]), &textures(&["floor"]), &document(map), 32);
+    let instances = build(&tree, &textures(&["floor"]), &document(map), 32);
     let sprites = drawn(&instances);
 
     assert_eq!(sprites.len(), 1);
     assert_eq!((sprites[0].x, sprites[0].y), (32.0, 0.0));
+}
+
+#[test]
+fn a_missing_state_draws_the_blank_state() {
+    let mut textures = TextureCatalog::new();
+    textures.insert(ICON, &icon_file(&["floor", ""])).expect("insert");
+    let appearance = |state: &str| Appearance {
+        icon: Some(String::from(ICON)),
+        icon_state: Some(String::from(state)),
+        ..Default::default()
+    };
+
+    assert_eq!(
+        super::sprite_texture(&textures, &appearance("nope")),
+        textures.lookup(ICON, 1)
+    );
+    assert_eq!(
+        super::sprite_texture(&textures, &appearance("floor")),
+        textures.lookup(ICON, 0)
+    );
+
+    let mut textures = TextureCatalog::new();
+    textures.insert(ICON, &icon_file(&["floor"])).expect("insert");
+
+    assert_eq!(super::sprite_texture(&textures, &appearance("nope")), None);
 }

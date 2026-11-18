@@ -328,7 +328,7 @@ fn build_thumbnails(
 
         let prefab = Prefab::new(declaration.path.clone());
         let appearance = visual::resolve_id(&environment.tree, declaration.id, &prefab);
-        let thumbnail = match prefab_thumbnail_for(textures, environment, &appearance) {
+        let thumbnail = match prefab_thumbnail_for(textures, &appearance) {
             Some(thumbnail) => Some(thumbnail),
             None => {
                 let standalone = standalone_thumbnail(
@@ -341,7 +341,7 @@ fn build_thumbnails(
                 );
                 derived += usize::from(standalone.is_some());
 
-                standalone.or_else(|| prefab_thumbnail_or_missing(textures, environment, &appearance))
+                standalone.or_else(|| prefab_thumbnail_or_missing(textures, &appearance))
             },
         };
         thumbnails.insert(declaration.id, thumbnail);
@@ -364,7 +364,7 @@ fn standalone_thumbnail(
     let delta = standalone.appearance(environment, prefab)?;
     let appearance = visual::resolve_delta(tree, id, prefab, &delta);
 
-    prefab_thumbnail_for(textures, environment, &appearance)
+    prefab_thumbnail_for(textures, &appearance)
 }
 
 #[cfg(test)]

@@ -7,6 +7,7 @@ use base::{
 use dmi::metadata::Dir;
 use objtree::{ObjectTree, TypeId};
 use prefab::Prefab;
+use render::texture::TextureCatalog;
 
 use crate::{
     document::{command::EditGroupId, instance::InstanceChange, instance::VarMutation},
@@ -39,13 +40,14 @@ fn direction_mutation(direction: Dir) -> VarMutation {
 }
 
 pub(crate) fn direction_state(
-    environment: &Environment, id: TypeId, appearance: &visual::Appearance, declared: Option<[bool; 8]>,
+    environment: &Environment, textures: &TextureCatalog, id: TypeId, appearance: &visual::Appearance,
+    declared: Option<[bool; 8]>,
 ) -> DirectionState {
     let dmi_directions = appearance
         .icon
         .as_deref()
-        .and_then(|icon| environment.icon(icon))
-        .and_then(|metadata| metadata.find(appearance.icon_state.as_deref().unwrap_or_default()))
+        .and_then(|icon| textures.metadata(icon))
+        .and_then(|metadata| metadata.find_or_blank(appearance.icon_state.as_deref().unwrap_or_default()))
         .map(|state| state.dirs);
 
     DirectionState {
@@ -131,6 +133,7 @@ impl Session {
 
         Some(direction_state(
             environment,
+            &self.textures,
             id,
             &appearance,
             self.declared_directions(&prefab.path),
@@ -247,7 +250,13 @@ impl Session {
         };
 
         let appearance = visual::resolve_id(&environment.tree, id, prefab);
-        let state = direction_state(environment, id, &appearance, self.declared_directions(&prefab.path));
+        let state = direction_state(
+            environment,
+            &self.textures,
+            id,
+            &appearance,
+            self.declared_directions(&prefab.path),
+        );
         if state.directional_types.is_some() {
             return Vec::new();
         }

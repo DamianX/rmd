@@ -26,8 +26,12 @@ pub(crate) fn imgui_ini_path() -> io::Result<PathBuf> {
     Ok(settings_path()?.with_file_name("imgui.ini"))
 }
 
-pub(crate) fn backup_dir() -> io::Result<PathBuf> {
-    Ok(settings_path()?.with_file_name("backup"))
+pub(crate) fn crash_dir() -> io::Result<PathBuf> {
+    Ok(settings_path()?.with_file_name("crashes"))
+}
+
+pub(crate) fn recovery_dir() -> io::Result<PathBuf> {
+    Ok(settings_path()?.with_file_name("recovery"))
 }
 
 pub(crate) fn themes_dir() -> io::Result<PathBuf> {

@@ -1,10 +1,13 @@
 mod args;
+mod crash;
+mod dialog;
 mod events;
 pub(crate) mod external_editor;
 mod logging;
 pub(crate) mod pacing;
 pub(crate) mod process;
 mod redraw;
+mod reveal;
 mod screenshot;
 #[cfg(test)]
 mod tests;
@@ -12,7 +15,9 @@ pub(crate) mod update;
 
 use std::{
     collections::HashSet,
+    fmt::Display,
     fs, mem,
+    panic::{self, AssertUnwindSafe},
     path::{Path, PathBuf},
     process::ExitCode,
     sync::Arc,
@@ -43,14 +48,35 @@ use crate::{
     session::Session,
     settings::{
         Settings,
-        paths::{backup_dir, imgui_ini_path, profiles_dir, themes_dir},
+        paths::{imgui_ini_path, profiles_dir, themes_dir},
     },
 };
 
+#[cfg(target_os = "windows")]
+use crate::settings::paths::log_path;
 use args::{parse_arguments, usage};
+use dialog::show_error;
 use external_editor::SourceLocation;
 use pacing::{FrameDemand, FramePacer, NextFrame, Status};
 use screenshot::{PendingScreenshot, ScreenshotTarget, SystemClipboard};
+
+const DRIVER_HINT: &str = "Updating the graphics driver usually fixes this.";
+
+fn window_error(error: impl Display) -> String {
+    format!("rmd could not create its window: {error}")
+}
+
+fn gpu_error(error: impl Display) -> String {
+    format!("rmd could not initialize the GPU:\n{error}\n\n{DRIVER_HINT}")
+}
+
+fn interface_error(error: impl Display) -> String {
+    format!("rmd could not set up its interface: {error}")
+}
+
+fn renderer_error(error: impl Display) -> String {
+    format!("rmd could not create its renderer:\n{error}\n\n{DRIVER_HINT}")
+}
 
 fn style_base(themes: &Themes, settings: &Settings) -> Style {
     let mut style = themes.active_style().clone();
@@ -61,6 +87,7 @@ fn style_base(themes: &Themes, settings: &Settings) -> Style {
 
 pub(crate) fn run() -> ExitCode {
     logging::init();
+    crash::install();
 
     let arguments = std::env::args().skip(1).map(PathBuf::from).collect::<Vec<_>>();
     let arguments = match parse_arguments(&arguments) {
@@ -102,13 +129,7 @@ pub(crate) fn run() -> ExitCode {
         ),
     };
 
-    let mut loader = match backup_dir() {
-        Ok(root) => Loader::with_backups(root),
-        Err(error) => {
-            log::warn!("map backups are off: {error}");
-            Loader::new()
-        },
-    };
+    let mut loader = Loader::new();
     let deferred_job = if settings_ready {
         if let Some(job) = startup_job {
             loader.start(job);
@@ -121,7 +142,10 @@ pub(crate) fn run() -> ExitCode {
     let mut ui = match UiState::new(!settings_ready) {
         Ok(ui) => ui,
         Err(e) => {
-            log::error!("{e}");
+            show_error(
+                "rmd could not start",
+                &format!("rmd could not set up its interface state: {e}"),
+            );
 
             return ExitCode::FAILURE;
         },
@@ -130,7 +154,10 @@ pub(crate) fn run() -> ExitCode {
     let event_loop = match EventLoop::new() {
         Ok(event_loop) => event_loop,
         Err(e) => {
-            log::error!("{e}");
+            show_error(
+                "rmd could not start",
+                &format!("rmd could not create its event loop: {e}"),
+            );
 
             return ExitCode::FAILURE;
         },
@@ -151,6 +178,7 @@ pub(crate) fn run() -> ExitCode {
         retry_coop_after_load: false,
         deferred_job,
         settings_ready,
+        startup_error: None,
         uploaded_texture_revision: None,
         pending_screenshot: None,
         screenshot_dir: None,
@@ -164,21 +192,41 @@ pub(crate) fn run() -> ExitCode {
         themes: None,
         ui_font: None,
         window: None,
+        is_revealed: false,
         pacer: FramePacer::default(),
         is_occluded: false,
     };
 
-    let result = event_loop.run_app(&mut app);
+    crash::watch_session(&raw const app.session);
+    let outcome = panic::catch_unwind(AssertUnwindSafe(|| event_loop.run_app(&mut app)));
+    crash::unwatch_session();
+
+    let result = match outcome {
+        Ok(result) => result,
+        Err(_) => {
+            let message = crash::handle_main_thread_crash(&app.session);
+            show_error("rmd crashed", &message);
+            mem::forget(app);
+
+            return ExitCode::FAILURE;
+        },
+    };
     if app.settings_ready {
         app.capture_window_settings();
         app.settings.capture_from(&app.session.options);
         app.settings.save();
     }
 
+    if let Some(message) = app.startup_error.take() {
+        show_error("rmd could not start", &message);
+
+        return ExitCode::FAILURE;
+    }
+
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            log::error!("{e}");
+            show_error("rmd stopped unexpectedly", &format!("the event loop failed: {e}"));
 
             ExitCode::FAILURE
         },
@@ -237,6 +285,7 @@ struct App {
     retry_coop_after_load: bool,
     deferred_job: Option<Job>,
     settings_ready: bool,
+    startup_error: Option<String>,
     uploaded_texture_revision: Option<u64>,
     pending_screenshot: Option<PendingScreenshot>,
     screenshot_dir: Option<PathBuf>,
@@ -250,19 +299,22 @@ struct App {
     themes: Option<Themes>,
     ui_font: Option<UiFont>,
     window: Option<Arc<Window>>,
+    is_revealed: bool,
     pacer: FramePacer,
     is_occluded: bool,
 }
 
 impl App {
-    fn start(&mut self, event_loop: &ActiveEventLoop) -> Result<(), Box<dyn std::error::Error>> {
+    fn start(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {
         let attributes = Window::default_attributes()
             .with_title(&self.title)
-            .with_maximized(self.settings.maximized)
             .with_inner_size(LogicalSize::new(1280, 720));
-        let window = Arc::new(event_loop.create_window(attributes)?);
+        let window = reveal::create_window(event_loop, attributes, self.settings.maximized).map_err(window_error)?;
+        let window = Arc::new(window);
         let size = window.inner_size();
-        let device = Device::new(window.window_handle()?.as_raw(), window.display_handle()?.as_raw())?;
+        let window_handle = window.window_handle().map_err(gpu_error)?.as_raw();
+        let display_handle = window.display_handle().map_err(gpu_error)?.as_raw();
+        let device = Device::new(window_handle, display_handle).map_err(gpu_error)?;
         self.ui.gpu = Some(device.adapter.clone());
 
         let mut imgui = Context::create();
@@ -275,25 +327,27 @@ impl App {
             .inspect_err(|e| log::error!("could not find the themes folder: {e}"))
             .ok();
         let themes = Themes::load(themes_dir, imgui.style(), &self.settings.theme);
-        let ui_font = UiFont::new(imgui.font_atlas(), &mut self.settings.font)?;
+        let ui_font = UiFont::new(imgui.font_atlas(), &mut self.settings.font).map_err(interface_error)?;
 
-        let ini_filename = imgui_ini_path()?;
+        let ini_filename = imgui_ini_path().map_err(interface_error)?;
         if let Some(parent) = ini_filename.parent() {
-            fs::create_dir_all(parent)?;
+            fs::create_dir_all(parent).map_err(interface_error)?;
         }
-        imgui.set_ini_filename(Some(ini_filename))?;
-        imgui.set_renderer_name(Some("rmd vir"))?;
+        imgui.set_ini_filename(Some(ini_filename)).map_err(interface_error)?;
+        imgui.set_renderer_name(Some("rmd vir")).map_err(interface_error)?;
         let config = imgui.io().config_flags() | ConfigFlags::DOCKING_ENABLE;
         imgui.io_mut().set_config_flags(config);
         imgui.io_mut().set_config_input_text_cursor_blink(false);
 
-        let mut platform = WinitPlatform::new(&mut imgui)?;
-        platform.attach_window(Arc::clone(&window), HiDpiMode::Default, &mut imgui)?;
+        let mut platform = WinitPlatform::new(&mut imgui).map_err(interface_error)?;
+        platform
+            .attach_window(Arc::clone(&window), HiDpiMode::Default, &mut imgui)
+            .map_err(interface_error)?;
 
         let backend =
             imgui.io().backend_flags() | BackendFlags::RENDERER_HAS_TEXTURES | BackendFlags::RENDERER_HAS_VTX_OFFSET;
         imgui.io_mut().set_backend_flags(backend);
-        let consumer = imgui.create_synchronous_renderer_consumer()?;
+        let consumer = imgui.create_synchronous_renderer_consumer().map_err(interface_error)?;
 
         let viewports_enabled = match platform.enable_viewports(&mut imgui) {
             Ok(()) => {
@@ -314,9 +368,10 @@ impl App {
             self.settings.ui_scale_override_percent,
         );
 
-        let mut renderer = Renderer::new(device, size.width, size.height, self.session.textures.len())?;
+        let mut renderer =
+            Renderer::new(device, size.width, size.height, self.session.textures.len()).map_err(renderer_error)?;
         self.session.texture_capacity = Some(renderer.texture_capacity());
-        renderer.set_textures(&self.session.textures)?;
+        renderer.set_textures(&self.session.textures).map_err(renderer_error)?;
 
         self.uploaded_texture_revision = Some(self.session.texture_revision());
         self.consumer = Some(consumer);
@@ -790,4 +845,17 @@ fn bake_options(settings: &Settings, environment: Option<&std::path::Path>) -> B
             ..Default::default()
         },
     }
+}
+
+#[cfg(target_os = "windows")]
+fn with_log_path(message: String) -> String {
+    match log_path() {
+        Ok(path) => format!("{message}\n\nDetails were written to {}", path.display()),
+        Err(_) => message,
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn with_log_path(message: String) -> String {
+    message
 }

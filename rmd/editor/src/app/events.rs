@@ -8,7 +8,7 @@ use winit::{
     window::WindowId,
 };
 
-use super::{App, Redraw, pacing::Status};
+use super::{App, Redraw, pacing::Status, reveal::reveal, with_log_path};
 
 pub(super) fn is_input(event: &WindowEvent) -> bool {
     matches!(
@@ -39,7 +39,7 @@ impl ApplicationHandler for App {
         }
 
         if let Err(e) = self.start(event_loop) {
-            log::error!("{e}");
+            self.startup_error = Some(with_log_path(e));
             event_loop.exit();
 
             return;
@@ -129,6 +129,13 @@ impl ApplicationHandler for App {
 
                     if let (Some(platform), Some(imgui)) = (self.platform.as_ref(), self.imgui.as_mut()) {
                         viewports::finish_frame(platform, imgui, event_loop);
+                    }
+
+                    if !self.is_revealed
+                        && let Some(window) = self.window.as_ref()
+                    {
+                        reveal(window);
+                        self.is_revealed = true;
                     }
 
                     redraw

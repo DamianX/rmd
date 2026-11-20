@@ -1,4 +1,3 @@
-pub(crate) mod backup;
 pub(crate) mod command;
 pub(crate) mod grid;
 pub(crate) mod instance;
@@ -833,6 +832,12 @@ impl MapDocument {
         let format = self.format;
 
         self.save_as_with(path, format, sanitize)
+    }
+
+    pub fn export(&self) -> String {
+        let exported = self.to_map();
+
+        writer::MapWriter::new(&exported).with_format(self.format).write()
     }
 
     pub fn save_as(&mut self, path: impl Into<PathBuf>, format: MapFormat) -> std::io::Result<()> {

@@ -2774,12 +2774,26 @@ fn associative_iteration_preserves_keys_and_values() {
     );
 }
 
+/// expected values are what BYOND 516.1689 prints for the same fixture
 #[test]
 fn params2list_splits_and_decodes_pairs() {
-    assert_eq!(
-        run(fixture!("programs/params2list_splits_and_decodes_pairs.dm"), "test"),
-        GenericValue::Text("4:1,2:13,0:1:a b!".into())
-    );
+    let source = fixture!("programs/params2list_splits_and_decodes_pairs.dm");
+    for (name, expected) in [
+        (
+            "test",
+            "4: 'left'=('-14,0'|'1,2') 'right'='13,0' 'flag'='' 'name'='a b!'",
+        ),
+        (
+            "test_repeated_keys",
+            "1: 'a'=('1'|'2'|'3'), 2: 'a'=('1'|'') 'b'='', 2: 'A'='1' 'a'='2'",
+        ),
+        (
+            "test_empty_parts",
+            "0:, 1: 'a'='1', 3: 'a'='1' ''='' 'b'='2', 2: ''='' 'a'='1', 1: 'a'='b=c', 1: 'flag'=''",
+        ),
+    ] {
+        assert_eq!(run(source, name), GenericValue::from(expected), "{name}");
+    }
 }
 
 #[test]

@@ -1082,17 +1082,37 @@ impl Evaluator<'_> {
     /// Params: Text string of parameter values.
     pub(crate) fn params2list(&mut self, source: &str) -> Result<GenericValue> {
         self.charge(source.len())?;
-        let mut entries: Vec<(GenericValue, Option<GenericValue>)> = Vec::new();
-        for pair in source.split(['&', ';']).filter(|pair| !pair.is_empty()) {
-            let (key, value) = match pair.split_once('=') {
-                Some((key, value)) => (decode_param(key), Some(GenericValue::from(decode_param(value)))),
-                None => (decode_param(pair), None),
-            };
-            let key = GenericValue::from(key);
-            match entries.iter_mut().find(|(existing, _)| *existing == key) {
-                Some(entry) => entry.1 = value,
-                None => entries.push((key, value)),
+        let mut pairs = source.split(['&', ';']).collect::<Vec<_>>();
+        // `a=1&` has one entry, `a=1&&` has an empty one after it
+        if pairs.last().is_some_and(|pair| pair.is_empty()) {
+            pairs.pop();
+        }
+
+        let mut grouped: Vec<(String, Vec<String>)> = Vec::new();
+        for pair in pairs {
+            // a key with no `=` gets an empty text, not null
+            let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+            let (key, value) = (decode_param(key), decode_param(value));
+            match grouped.iter_mut().find(|(existing, _)| *existing == key) {
+                Some((_, values)) => values.push(value),
+                None => grouped.push((key, vec![value])),
             }
+        }
+
+        let mut entries = Vec::with_capacity(grouped.len());
+        for (key, mut values) in grouped {
+            // a repeated key holds a list of its values in order
+            let value = if values.len() == 1 {
+                GenericValue::from(values.remove(0))
+            } else {
+                self.list(
+                    values
+                        .into_iter()
+                        .map(|value| (GenericValue::from(value), None))
+                        .collect(),
+                )?
+            };
+            entries.push((GenericValue::from(key), Some(value)));
         }
 
         self.list(entries)

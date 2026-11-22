@@ -164,6 +164,26 @@ fn toggle(panel: Panel) -> MenuActions {
 }
 
 #[test]
+fn showing_a_panel_opens_and_focuses_it_and_never_closes_it() {
+    let mut state = UiState::new(false).unwrap();
+    let mut settings = Settings::default();
+    let show = MenuActions {
+        show_panel: Some(Panel::Git),
+        ..MenuActions::default()
+    };
+    settings.panels.git = false;
+
+    state.apply_window_actions(&mut settings, &show);
+
+    assert!(settings.panels.git);
+    assert!(state.git_panel.has_focus_request());
+
+    state.apply_window_actions(&mut settings, &show);
+
+    assert!(settings.panels.git, "showing an open panel keeps it open");
+}
+
+#[test]
 fn a_closed_panel_reopens_from_the_window_menu_in_its_dock() {
     let _guard = CONTEXT_LOCK.lock().unwrap();
     let mut context = docking_context();
@@ -818,7 +838,7 @@ fn editing_commands_are_bound_to_the_usual_chords() {
         KeyBinding::new(dear_imgui_rs::Key::M)
     );
     // Every action is reachable from the settings list, or it cannot be rebound.
-    assert_eq!(KeybindAction::ALL.len(), 62);
+    assert_eq!(KeybindAction::ALL.len(), 64);
     assert_eq!(KeybindAction::RECENT.len(), 10);
     assert!(KeybindAction::ALL.contains(&KeybindAction::Save));
     assert!(KeybindAction::ALL.contains(&KeybindAction::Undo));

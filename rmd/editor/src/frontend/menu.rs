@@ -13,7 +13,6 @@ use crate::{
     },
     session::Session,
     settings::{Panel, Settings, keybind::KeybindAction},
-    tool::Tool,
     viewport::panel::edit::EditCommand,
 };
 
@@ -46,9 +45,11 @@ pub(super) struct MenuActions {
     pub(super) redo: bool,
     pub(super) search: bool,
     pub(super) go_to: bool,
+    pub(super) command_palette: bool,
     pub(super) resize_map: bool,
     pub(super) reset_layout: bool,
     pub(super) toggle_panel: Option<Panel>,
+    pub(super) show_panel: Option<Panel>,
     pub(super) toggle_dm_ui: bool,
     pub(super) coop_dialog: Option<CoopDialogKind>,
 }
@@ -263,41 +264,18 @@ fn draw_edit_menu(ui: &Ui, session: &Session, settings: &Settings, actions: &mut
     }
 
     ui.separator();
-    let selected = session.selection().is_some();
-    let is_picking = session.tool() == Tool::Pick && session.picked_instance().is_some();
-    let is_stash = session.is_stash_active();
-    for (label, action, command, enabled) in [
-        ("Copy", KeybindAction::Copy, EditCommand::Copy, selected || is_picking),
-        (
-            "Cut",
-            KeybindAction::Cut,
-            EditCommand::Cut,
-            (selected || is_picking) && !is_stash,
-        ),
-        (
-            "Paste",
-            KeybindAction::Paste,
-            EditCommand::Paste,
-            session.clipboard().is_some() && !is_stash,
-        ),
-        (
-            "Delete",
-            KeybindAction::Delete,
-            EditCommand::Delete,
-            (selected || session.picked_instance().is_some()) && !is_stash,
-        ),
-        (
-            "Deselect",
-            KeybindAction::Deselect,
-            EditCommand::Deselect,
-            selected || session.picked_instance().is_some(),
-        ),
+    for (label, action, command) in [
+        ("Copy", KeybindAction::Copy, EditCommand::Copy),
+        ("Cut", KeybindAction::Cut, EditCommand::Cut),
+        ("Paste", KeybindAction::Paste, EditCommand::Paste),
+        ("Delete", KeybindAction::Delete, EditCommand::Delete),
+        ("Deselect", KeybindAction::Deselect, EditCommand::Deselect),
     ] {
         if ui.menu_item_enabled_selected_with_shortcut(
             label,
             settings.keybindings.get(action).label(ui),
             false,
-            enabled && session.map().is_some(),
+            command.is_enabled(session),
         ) {
             actions.edit = Some(command);
         }
@@ -319,6 +297,14 @@ fn draw_edit_menu(ui: &Ui, session: &Session, settings: &Settings, actions: &mut
         session.map().is_some(),
     ) {
         actions.go_to = true;
+    }
+    if ui.menu_item_enabled_selected_with_shortcut(
+        "Command palette...",
+        settings.keybindings.get(KeybindAction::CommandPalette).label(ui),
+        false,
+        true,
+    ) {
+        actions.command_palette = true;
     }
     if ui.menu_item_enabled_selected_no_shortcut(
         "Resize map...",

@@ -34,6 +34,8 @@ pub(super) const SETTINGS_KEYBINDING_GROUPS: &[(&str, &[KeybindAction])] = &[
             KeybindAction::Find,
             KeybindAction::FindNext,
             KeybindAction::FindPrevious,
+            KeybindAction::CommandPalette,
+            KeybindAction::CommandPaletteActions,
         ],
     ),
     (

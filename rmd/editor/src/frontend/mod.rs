@@ -59,6 +59,7 @@ use crate::{
 
 mod about;
 mod actions;
+mod command_palette;
 pub(crate) mod dialog;
 #[cfg(test)]
 pub(crate) mod fixtures;
@@ -66,6 +67,7 @@ mod menu;
 pub(crate) mod welcome;
 
 use self::{
+    command_palette::CommandPalette,
     dialog::{SAVE_ERROR_COLOR, TrustDecision, draw_keybind_preset_dialog},
     welcome::{ForgetRequest, WelcomeOutput},
 };
@@ -93,6 +95,19 @@ pub(crate) const LAYER_KEYS: [(KeybindAction, TypeLayer); 4] = [
     (KeybindAction::ToggleTurfLayer, TypeLayer::Turf),
     (KeybindAction::ToggleObjLayer, TypeLayer::Obj),
     (KeybindAction::ToggleMobLayer, TypeLayer::Mob),
+];
+
+pub(crate) const TOOL_KEYS: [(KeybindAction, Tool); 10] = [
+    (KeybindAction::PlaceTool, Tool::Place),
+    (KeybindAction::PickTool, Tool::Pick),
+    (KeybindAction::MoveTool, Tool::Move),
+    (KeybindAction::NodeTool, Tool::Node),
+    (KeybindAction::SelectTool, Tool::Select),
+    (KeybindAction::DeleteTool, Tool::Delete),
+    (KeybindAction::ReplaceTool, Tool::Replace),
+    (KeybindAction::FillTool, Tool::Fill),
+    (KeybindAction::RectFillTool, Tool::RectFill),
+    (KeybindAction::CommentTool, Tool::Comment),
 ];
 
 const SCREENSHOT_KEYS: [(KeybindAction, ScreenshotArea, bool); 4] = [
@@ -156,6 +171,7 @@ pub enum OpenRequest {
     PickMap,
     Codebase(PathBuf),
     Map(PathBuf),
+    Maps(Vec<PathBuf>),
     ShareMap(PathBuf),
     ReloadCoop,
 }
@@ -231,6 +247,7 @@ pub struct UiState {
     pub(crate) delete_level_dialog: Option<DeleteLevelDialog>,
     pub(crate) resize_map_dialog: Option<ResizeMapDialog>,
     pub(crate) go_to_dialog: Option<GoToDialog>,
+    pub(crate) command_palette: Option<CommandPalette>,
     pub(crate) coop_dialog: Option<CoopDialog>,
     pub(crate) coop_notice: CoopNotice,
     pub(crate) comment_draft: Option<CommentDraft>,
@@ -315,6 +332,7 @@ impl UiState {
             delete_level_dialog: None,
             resize_map_dialog: None,
             go_to_dialog: None,
+            command_palette: None,
             coop_dialog: None,
             coop_notice: CoopNotice::default(),
             comment_draft: None,
@@ -468,6 +486,7 @@ impl UiState {
         }
 
         let mut menu = self.draw_menu_bar(ui, session, settings, loading);
+        self.draw_command_palette(ui, session, settings, loading, &mut menu);
         self.read_edit_keys(ui, session, settings, &mut menu);
         self.apply_window_actions(settings, &menu);
         settings.mirror_camera ^= menu.toggle_mirror_camera;

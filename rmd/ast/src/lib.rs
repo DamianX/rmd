@@ -214,9 +214,14 @@ pub enum ForLoop {
 }
 
 #[derive(Debug, Clone)]
-pub struct LoopBinding {
-    pub spec: VarSpec,
-    pub declares: bool,
+pub enum LoopBinding {
+    /// `for(var/mob/M in world)`
+    Declare(VarSpec),
+    /// `for(M in world)`, `for(. in L)`, `for(holder.entry in L)`
+    Assign {
+        target: ExpressionId,
+        as_type: Option<TypeSpec>,
+    },
 }
 
 #[derive(Debug, Clone)]

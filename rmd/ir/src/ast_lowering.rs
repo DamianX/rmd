@@ -2116,12 +2116,17 @@ impl<'a> IrModuleBuilder<'a> {
         let value_var = self.binding(value);
         let key_var = key.as_ref().map(|key| self.binding(key));
         // `for(var/obj/O as anything in L)` keeps every entry, not only the objs
-        let is_unfiltered = value
-            .spec
-            .as_type
-            .as_ref()
-            .is_some_and(|spec| spec.flags.contains(InputType::ANYTHING));
-        let ty = value.spec.var_type.clone().filter(|_| !is_unfiltered);
+        let ty = match value {
+            ast::LoopBinding::Declare(spec) => {
+                let is_unfiltered = spec
+                    .as_type
+                    .as_ref()
+                    .is_some_and(|as_type| as_type.flags.contains(InputType::ANYTHING));
+
+                spec.var_type.clone().filter(|_| !is_unfiltered)
+            },
+            ast::LoopBinding::Assign { .. } => None,
+        };
         let iterator = self.emit_instr(IrNode::IterInit {
             list,
             ty: ty.map(Box::new),
@@ -2130,6 +2135,7 @@ impl<'a> IrModuleBuilder<'a> {
 
         let header = self.make_block();
         let taken = self.make_block();
+        let exhausted = self.make_block();
         let exit = self.make_block();
         self.terminate_current_block(IrNode::Branch(header));
 
@@ -2139,16 +2145,26 @@ impl<'a> IrModuleBuilder<'a> {
         self.terminate_current_block(IrNode::ConditionalBranch {
             condition,
             true_block: taken,
-            false_block: exit,
+            false_block: exhausted,
         });
         self.seal_block(taken);
+        self.seal_block(exhausted);
+
+        // a loop that runs out leaves null in its variables, `break` keeps the entry
+        self.set_current_block(exhausted);
+        let null = self.undefined();
+        self.write_loop_slot(value_var, exhausted, null);
+        if let Some(key_var) = key_var {
+            self.write_loop_slot(key_var, exhausted, null);
+        }
+        self.terminate_current_block(IrNode::Branch(exit));
 
         self.set_current_block(taken);
         let next = self.emit_instr(IrNode::IterValue(iterator));
-        self.write_variable(value_var, taken, next);
+        self.write_loop_slot(value_var, taken, next);
         if let Some(key_var) = key_var {
             let next = self.emit_instr(IrNode::IterKey(iterator));
-            self.write_variable(key_var, taken, next);
+            self.write_loop_slot(key_var, taken, next);
         }
         self.lower_statements(body);
         self.terminate_current_block(IrNode::Branch(header));
@@ -2164,6 +2180,8 @@ impl<'a> IrModuleBuilder<'a> {
         step: Option<ExpressionId>, body: &[Statement],
     ) {
         let var = self.binding(variable);
+        // the body may write the loop variable without changing which values the loop visits
+        let counter = self.declare_temp("$range_counter");
         let start = self.lower_expr(start);
         let end = self.lower_expr(end);
         let step = match step {
@@ -2171,7 +2189,7 @@ impl<'a> IrModuleBuilder<'a> {
             None => self.intern_constant(Value::Num(1.0)),
         };
         if let Some(block) = self.current_block {
-            self.write_variable(var, block, start);
+            self.write_variable(counter, block, start);
         }
 
         let header = self.make_block();
@@ -2181,7 +2199,7 @@ impl<'a> IrModuleBuilder<'a> {
         self.terminate_current_block(IrNode::Branch(header));
 
         self.set_current_block(header);
-        let current = self.read_variable(var, header);
+        let current = self.read_variable(counter, header);
         let condition = self.emit_instr(IrNode::RangeTest { current, end, step });
         self.enter_loop(label, header, stepping, exit);
         self.terminate_current_block(IrNode::ConditionalBranch {
@@ -2192,19 +2210,20 @@ impl<'a> IrModuleBuilder<'a> {
         self.seal_block(taken);
 
         self.set_current_block(taken);
+        self.write_loop_slot(var, taken, current);
         self.lower_statements(body);
         self.terminate_current_block(IrNode::Branch(stepping));
         self.controls.pop();
         self.seal_block(stepping);
 
         self.set_current_block(stepping);
-        let current = self.read_variable(var, stepping);
+        let current = self.read_variable(counter, stepping);
         let next = self.emit_instr(IrNode::Binary {
             op: BinaryOp::Add,
             lhs: current,
             rhs: step,
         });
-        self.write_variable(var, stepping, next);
+        self.write_variable(counter, stepping, next);
         self.terminate_current_block(IrNode::Branch(header));
         self.seal_block(header);
 
@@ -2212,22 +2231,31 @@ impl<'a> IrModuleBuilder<'a> {
         self.resume(exit);
     }
 
-    fn binding(&mut self, binding: &ast::LoopBinding) -> BindingId {
-        if binding.declares {
-            let spec = self.spec(&binding.spec);
+    fn binding(&mut self, binding: &ast::LoopBinding) -> LoopSlot {
+        match binding {
+            ast::LoopBinding::Declare(spec) => {
+                let spec = self.spec(spec);
 
-            return self.declare_var(spec);
+                LoopSlot::Local(self.declare_var(spec))
+            },
+            ast::LoopBinding::Assign { target, .. } => LoopSlot::Place(*target),
         }
+    }
 
-        match self.lookup(&binding.spec.name) {
-            Some(var) => var,
-            None => {
-                let spec = self.spec(&binding.spec);
-
-                self.declare_var(spec)
+    fn write_loop_slot(&mut self, slot: LoopSlot, block: IrNodeId, value: IrNodeId) {
+        match slot {
+            LoopSlot::Local(var) => self.write_variable(var, block, value),
+            LoopSlot::Place(target) => {
+                self.store(target, value);
             },
         }
     }
+}
+
+#[derive(Clone, Copy)]
+enum LoopSlot {
+    Local(BindingId),
+    Place(ExpressionId),
 }
 
 struct ControlTarget {

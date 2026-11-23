@@ -2832,6 +2832,48 @@ fn descending_ranges_use_the_steps_sign() {
 }
 
 #[test]
+fn return_value_as_a_loop_variable() {
+    assert_eq!(
+        run(fixture!("programs/return_value_as_a_loop_variable.dm"), "test",),
+        GenericValue::from("2 b 3 6")
+    );
+}
+
+#[test]
+fn loop_variables_after_the_loop_follow_byond() {
+    let source = fixture!("programs/loop_variables_after_the_loop_follow_byond.dm");
+    for (name, expected) in [
+        ("keyed_exhausted", "k=null v=null"),
+        ("keyed_broke", "k='b' v='2'"),
+        ("keyed_empty", "k=null v=null"),
+        ("range_body_adds", "i='7' iterations=6 seen=1,2,3,4,5,6,"),
+        ("range_body_jumps", "i='10' iterations=4"),
+        ("range_body_rewinds", "i='0' iterations=3"),
+        ("range_descending", "i='1'"),
+        ("range_empty", "i='init'"),
+        ("range_in_form", "i='4'"),
+        ("range_in_form_empty", "i='init'"),
+        ("range_fraction", "i='1.8'"),
+        ("range_end_changes", "i='4' iterations=4"),
+        ("range_step_changes", "i='8' iterations=8"),
+        ("range_broke", "i='2'"),
+        ("range_continue", "i='4' iterations=3"),
+        ("list_body_writes", "x=null seen=1,2,3,"),
+        ("list_typed_filter", "x=null"),
+        ("list_null_source", "x=null"),
+        ("dot_results", "exhausted=null broke='2' range='4'"),
+        ("keyed_dot_value", "seen='a'='1','b'='2', dot=null k=null"),
+        ("keyed_field_value", "'a'='1','b'='2', after=null"),
+        ("field_list", "'1','2', after=null"),
+        ("field_range", "'1','2','3', after='3'"),
+        ("var_key_declares_value", "src.v='v0'"),
+        ("bare_name_is_a_field", "src.x=null"),
+    ] {
+        assert_eq!(run(source, name), GenericValue::from(expected), "{name}");
+    }
+}
+
+#[test]
 fn switch_cases_match_every_listed_value() {
     assert_eq!(
         run(fixture!("programs/switch_cases_match_every_listed_value.dm"), "test",),

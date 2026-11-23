@@ -1070,8 +1070,8 @@ impl<'a, 't> Parser<'a, 't> {
         }
 
         if self.starts_var_path() {
-            let binding = self.parse_loop_binding()?;
-            let spec = binding.spec.clone();
+            let spec = self.parse_loop_spec()?;
+            let binding = LoopBinding::Declare(spec.clone());
 
             if self.consume(Token::Equal) {
                 let start = self.parse_expression(Precedence::Assignment)?;
@@ -1093,10 +1093,7 @@ impl<'a, 't> Parser<'a, 't> {
 
             if self.consume(Token::Comma) {
                 let checkpoint = self.cursor;
-                if self.can_start_loop_binding()
-                    && let Ok(value) = self.parse_loop_binding()
-                    && self.consume(Token::In)
-                {
+                if let Some(value) = self.parse_keyed_loop_value(true)? {
                     return self.parse_for_membership(Some(binding), value);
                 }
 
@@ -1126,27 +1123,37 @@ impl<'a, 't> Parser<'a, 't> {
             return Err(ParseError::unexpected("in, =, a separator, or )", token, location));
         }
 
-        let first = self.parse_expression(Precedence::Assignment)?;
+        let (_, location) = self.peek().ok_or_else(ParseError::end_of_file)?;
+        let not_a_variable = ParseError::expected_name(location);
+        let (first, operator) =
+            self.with_expression_start(Precedence::Assignment, Self::parse_assignment_with_operator)?;
         // `for(point as anything in grid)`
         let as_type = self.consume(Token::As).then(|| self.parse_type_spec()).transpose()?;
-        if as_type.is_none() && self.consume(Token::To) {
-            let (binding, start) = self.assignment_loop_binding(first)?;
+        if as_type.is_none() && self.peek_is(Token::To) {
+            let to = self.advance()?;
+            let (variable, start) = self.plain_assignment(first).ok_or_else(|| {
+                let (got, location) = operator.unwrap_or(to);
+                ParseError::unexpected("=", got, location)
+            })?;
+            let target = self.loop_place(variable).ok_or(not_a_variable)?;
+            let binding = LoopBinding::Assign { target, as_type: None };
+
             return self.finish_range_for(binding, start);
         }
 
         if self.consume(Token::In) {
-            let mut binding = self.loop_binding_from_expression(first)?;
-            binding.spec.as_type = as_type;
+            let target = self.loop_place(first).ok_or(not_a_variable)?;
+            let binding = LoopBinding::Assign { target, as_type };
+
             return self.parse_for_membership(None, binding);
         }
 
         if self.consume(Token::Comma) {
             let checkpoint = self.cursor;
-            if self.can_start_loop_binding()
-                && let Ok(value) = self.parse_loop_binding()
-                && self.consume(Token::In)
-            {
-                let key = self.loop_binding_from_expression(first)?;
+            if let Some(value) = self.parse_keyed_loop_value(false)? {
+                let target = self.loop_place(first).ok_or(not_a_variable)?;
+                let key = LoopBinding::Assign { target, as_type: None };
+
                 return self.parse_for_membership(Some(key), value);
             }
 
@@ -1159,7 +1166,9 @@ impl<'a, 't> Parser<'a, 't> {
         }
 
         if self.consume(Token::ParenRight) {
-            let binding = self.loop_binding_from_expression(first)?;
+            let target = self.loop_place(first).ok_or(not_a_variable)?;
+            let binding = LoopBinding::Assign { target, as_type: None };
+
             return self.finish_list_for(None, binding, None);
         }
 
@@ -1219,41 +1228,87 @@ impl<'a, 't> Parser<'a, 't> {
         })))
     }
 
-    fn can_start_loop_binding(&self) -> bool {
-        self.starts_var_path() || self.peek().is_some_and(|(token, _)| token.is_identifier())
+    /// `Ok(None)` when what follows the comma is not a loop value, so the header is a standard `for`
+    fn parse_keyed_loop_value(&mut self, is_declaring: bool) -> ParseResult<Option<LoopBinding>> {
+        if self.starts_var_path() {
+            let Ok(spec) = self.parse_loop_spec() else {
+                return Ok(None);
+            };
+
+            return Ok(self.consume(Token::In).then_some(LoopBinding::Declare(spec)));
+        }
+
+        let Some((_, location)) = self.peek() else {
+            return Ok(None);
+        };
+
+        let Ok(value) = self.parse_expression(Precedence::Assignment) else {
+            return Ok(None);
+        };
+
+        let as_type = if self.consume(Token::As) {
+            let Ok(as_type) = self.parse_type_spec() else {
+                return Ok(None);
+            };
+
+            Some(as_type)
+        } else {
+            None
+        };
+
+        if !self.consume(Token::In) {
+            return Ok(None);
+        }
+
+        // `for(i = 0, i + 1 in L, i++)`
+        let Some(target) = self.loop_place(value) else {
+            return Ok(None);
+        };
+
+        if !is_declaring {
+            return Ok(Some(LoopBinding::Assign { target, as_type }));
+        }
+
+        let Some(Expression::Identifier(name)) = self.expressions.get(target.index()) else {
+            return Err(ParseError::expected_name(location));
+        };
+
+        Ok(Some(LoopBinding::Declare(VarSpec {
+            name: name.clone(),
+            var_type: None,
+            modifiers: VarModifiers::default(),
+            dimensions: Vec::new(),
+            as_type,
+        })))
     }
 
-    fn parse_loop_binding(&mut self) -> ParseResult<LoopBinding> {
-        let declares = self.starts_var_path();
+    fn parse_loop_spec(&mut self) -> ParseResult<VarSpec> {
         let path = self.parse_path()?;
         let mut spec = self.var_spec_from_path(&path);
         self.parse_var_spec_suffix(&mut spec)?;
 
-        Ok(LoopBinding { spec, declares })
+        Ok(spec)
     }
 
-    fn loop_binding_from_expression(&self, expression: ExpressionId) -> ParseResult<LoopBinding> {
-        let name = self.expression_identifier(expression)?;
-        Ok(LoopBinding {
-            spec: VarSpec {
-                name,
-                var_type: None,
-                modifiers: VarModifiers::default(),
-                dimensions: Vec::new(),
-                as_type: None,
-            },
-            declares: false,
-        })
+    fn loop_place(&self, expression: ExpressionId) -> Option<ExpressionId> {
+        match self.expressions.get(expression.index())? {
+            Expression::Identifier(_)
+            | Expression::Field { .. }
+            | Expression::Index { .. }
+            | Expression::Builtin(Builtin::ThisProc) => Some(expression),
+            Expression::Grouped(inner) => self.loop_place(*inner),
+            _ => None,
+        }
     }
 
-    fn assignment_loop_binding(&self, expression: ExpressionId) -> ParseResult<(LoopBinding, ExpressionId)> {
+    fn plain_assignment(&self, expression: ExpressionId) -> Option<(ExpressionId, ExpressionId)> {
         match self.expressions.get(expression.index()) {
             Some(Expression::Assign {
                 kind: AssignmentKind::Assign,
                 lhs_expr,
                 rhs_expr,
-            }) => Ok((self.loop_binding_from_expression(*lhs_expr)?, *rhs_expr)),
-            _ => Err(ParseError::expected_expression(Location::default())),
+            }) => Some((*lhs_expr, *rhs_expr)),
+            _ => None,
         }
     }
 
@@ -1301,14 +1356,6 @@ impl<'a, 't> Parser<'a, 't> {
             step,
             body,
         })))
-    }
-
-    fn expression_identifier(&self, expression: ExpressionId) -> ParseResult<Identifier> {
-        match self.expressions.get(expression.index()) {
-            Some(Expression::Identifier(name)) => Ok(name.clone()),
-            Some(Expression::Grouped(inner)) => self.expression_identifier(*inner),
-            _ => Err(ParseError::expected_expression(Location::default())),
-        }
     }
 
     fn parse_switch_statement(&mut self) -> ParseResult<Statement> {
@@ -1557,6 +1604,12 @@ impl<'a, 't> Parser<'a, 't> {
     }
 
     fn parse_expression(&mut self, precedence: Precedence) -> ParseResult<ExpressionId> {
+        self.with_expression_start(precedence, |parser| parser.parse_expression_at(precedence))
+    }
+
+    fn with_expression_start<T>(
+        &mut self, precedence: Precedence, parse: impl FnOnce(&mut Self) -> ParseResult<T>,
+    ) -> ParseResult<T> {
         // special case, probably not 1:1 with BYOND:tm: but operands below ternary precedence report the line their
         // whole expression starts on
         if precedence <= Precedence::Ternary
@@ -1566,13 +1619,13 @@ impl<'a, 't> Parser<'a, 't> {
             let outer = (self.expression_start, self.expression_cursor);
             self.expression_start = Some(SourceLine::of(location));
             self.expression_cursor = self.cursor;
-            let expression = self.parse_expression_at(precedence);
+            let expression = parse(self);
             (self.expression_start, self.expression_cursor) = outer;
 
             return expression;
         }
 
-        self.parse_expression_at(precedence)
+        parse(self)
     }
 
     fn parse_expression_at(&mut self, precedence: Precedence) -> ParseResult<ExpressionId> {
@@ -1644,23 +1697,30 @@ impl<'a, 't> Parser<'a, 't> {
     }
 
     fn parse_assignment_expression(&mut self) -> ParseResult<ExpressionId> {
+        let (expression, _) = self.parse_assignment_with_operator()?;
+
+        Ok(expression)
+    }
+
+    fn parse_assignment_with_operator(&mut self) -> ParseResult<(ExpressionId, Option<(Token<'a>, Location)>)> {
         let lhs_expr = self.parse_expression(Precedence::Ternary)?;
-        let Some((token, _)) = self.peek() else {
-            return Ok(lhs_expr);
+        let Some((token, location)) = self.peek() else {
+            return Ok((lhs_expr, None));
         };
 
         let Some(kind) = token_to_assignment_kind(&token) else {
-            return Ok(lhs_expr);
+            return Ok((lhs_expr, None));
         };
 
         self.advance()?;
         let rhs_expr = self.parse_expression(Precedence::Assignment)?;
-
-        Ok(self.make_expr(Expression::Assign {
+        let expression = self.make_expr(Expression::Assign {
             kind,
             lhs_expr,
             rhs_expr,
-        }))
+        });
+
+        Ok((expression, Some((token, location))))
     }
 
     fn parse_ternary_expression(&mut self) -> ParseResult<ExpressionId> {
@@ -2169,6 +2229,8 @@ mod tests {
         };
     }
 
+    use crate::error::ParseErrorKind;
+
     use super::*;
 
     fn tokens(source: &str) -> Vec<(Token<'_>, Location)> {
@@ -2504,12 +2566,15 @@ mod tests {
             panic!("expected a for loop")
         };
 
-        let ForLoop::List { value, .. } = loop_.as_ref() else {
-            panic!("expected a list loop")
+        let ForLoop::List {
+            value: LoopBinding::Assign { as_type, .. },
+            ..
+        } = loop_.as_ref()
+        else {
+            panic!("expected a list loop over a variable")
         };
 
-        assert!(!value.declares);
-        assert!(value.spec.as_type.is_some());
+        assert!(as_type.is_some());
     }
 
     #[test]
@@ -2748,20 +2813,65 @@ mod tests {
     fn parses_all_for_header_forms() {
         let ast = parse_source(fixture!("programs/parses_all_for_header_forms.dm"));
         let body = proc_body(&ast);
-        assert_eq!(body.len(), 7);
+        assert_eq!(body.len(), 9);
         assert!(matches!(&body[0], Statement::For(loop_) if matches!(**loop_, ForLoop::Standard { init: None, .. })));
         assert!(
             matches!(&body[1], Statement::For(loop_) if matches!(**loop_, ForLoop::Standard { init: Some(_), .. }))
         );
         assert!(matches!(&body[2], Statement::For(loop_) if matches!(**loop_, ForLoop::Standard { step: None, .. })));
         assert!(
-            matches!(&body[3], Statement::For(loop_) if matches!(**loop_, ForLoop::Range { variable: LoopBinding { declares: false, .. }, .. }))
+            matches!(&body[3], Statement::For(loop_) if matches!(**loop_, ForLoop::Range { variable: LoopBinding::Assign { .. }, .. }))
         );
         assert!(
-            matches!(&body[4], Statement::For(loop_) if matches!(**loop_, ForLoop::Range { variable: LoopBinding { declares: true, .. }, .. }))
+            matches!(&body[4], Statement::For(loop_) if matches!(**loop_, ForLoop::Range { variable: LoopBinding::Declare(_), .. }))
         );
         assert!(matches!(&body[5], Statement::For(loop_) if matches!(**loop_, ForLoop::List { key: Some(_), .. })));
         assert!(matches!(&body[6], Statement::For(loop_) if matches!(**loop_, ForLoop::List { key: None, .. })));
+        let is_this_proc =
+            |target: &ExpressionId| matches!(ast.get_expr(*target), Some(Expression::Builtin(Builtin::ThisProc)));
+        assert!(
+            matches!(&body[7], Statement::For(loop_) if matches!(&**loop_, ForLoop::List { value: LoopBinding::Assign { target, .. }, .. } if is_this_proc(target)))
+        );
+        assert!(
+            matches!(&body[8], Statement::For(loop_) if matches!(&**loop_, ForLoop::Range { variable: LoopBinding::Assign { target, .. }, .. } if is_this_proc(target)))
+        );
+    }
+
+    #[test]
+    fn loop_variable_errors_point_at_the_loop_header() {
+        for (source, location) in [
+            (
+                fixture!("programs/loop_variable_errors_point_at_the_loop_header.dm"),
+                "3:9",
+            ),
+            (
+                fixture!("programs/loop_variable_errors_point_at_the_loop_header-2.dm"),
+                "3:9",
+            ),
+            (
+                fixture!("programs/loop_variable_errors_point_at_the_loop_header-3.dm"),
+                "3:16",
+            ),
+        ] {
+            let error = parse(&tokens(source)).err().expect("not a loop variable");
+            assert!(matches!(error.kind, ParseErrorKind::ExpectedName));
+            assert_eq!(error.location.begin.to_string(), location);
+        }
+    }
+
+    #[test]
+    fn range_loops_without_a_start_expect_equals() {
+        for (source, got) in [
+            (fixture!("programs/range_loops_without_a_start_expect_equals.dm"), "to"),
+            (
+                fixture!("programs/range_loops_without_a_start_expect_equals-2.dm"),
+                "+=",
+            ),
+        ] {
+            let error = parse(&tokens(source)).err().expect("a range loop needs `= start`");
+            assert_eq!(error.kind.to_string(), format!("expected '=' got '{got}'"));
+            assert_eq!(error.location.begin.to_string(), "3:11");
+        }
     }
 
     #[test]

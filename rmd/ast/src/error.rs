@@ -6,7 +6,7 @@ pub enum ParseErrorKind {
     InvalidToken,
     UnexpectedToken { expected: String, got: String },
     ExpectedPath,
-    ExpectedExpression,
+    ExpectedLoopVariable,
     UnexpectedIndent,
     InvalidVarModifier(String),
     ExpressionLimit,
@@ -19,7 +19,7 @@ impl std::fmt::Display for ParseErrorKind {
             Self::InvalidToken => write!(f, "invalid token"),
             Self::UnexpectedToken { expected, got } => write!(f, "expected '{expected}' got '{got}'"),
             Self::ExpectedPath => write!(f, "expected a type path"),
-            Self::ExpectedExpression => write!(f, "expected an expression"),
+            Self::ExpectedLoopVariable => write!(f, "expected a variable name for the loop variable"),
             Self::UnexpectedIndent => write!(f, "unexpected indent"),
             Self::InvalidVarModifier(s) => write!(f, "invalid var modifier '{s}'"),
             Self::ExpressionLimit => write!(f, "too many expressions in one file"),
@@ -72,9 +72,9 @@ impl ParseError {
         }
     }
 
-    pub fn expected_expression(location: Location) -> Self {
+    pub fn expected_loop_variable(location: Location) -> Self {
         Self {
-            kind: ParseErrorKind::ExpectedExpression,
+            kind: ParseErrorKind::ExpectedLoopVariable,
             location,
         }
     }

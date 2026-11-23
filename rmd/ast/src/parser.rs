@@ -1131,11 +1131,18 @@ impl<'a, 't> Parser<'a, 't> {
 
         let (_, location) = self.peek().ok_or_else(ParseError::end_of_file)?;
         let not_a_variable = ParseError::expected_loop_variable(location);
-        let first = self.parse_expression(Precedence::Assignment)?;
+        let (first, operator) =
+            self.with_expression_start(Precedence::Assignment, Self::parse_assignment_with_operator)?;
         // `for(point as anything in grid)`
         let as_type = self.consume(Token::As).then(|| self.parse_type_spec()).transpose()?;
-        if as_type.is_none() && self.consume(Token::To) {
-            let (binding, start) = self.assignment_loop_binding(first).ok_or(not_a_variable)?;
+        if as_type.is_none() && self.peek_is(Token::To) {
+            let to = self.advance()?;
+            let (variable, start) = self.plain_assignment(first).ok_or_else(|| {
+                let (got, location) = operator.unwrap_or(to);
+                ParseError::unexpected("=", got, location)
+            })?;
+            let binding = self.loop_binding_from_expression(variable).ok_or(not_a_variable)?;
+
             return self.finish_range_for(binding, start);
         }
 
@@ -1265,13 +1272,13 @@ impl<'a, 't> Parser<'a, 't> {
         }
     }
 
-    fn assignment_loop_binding(&self, expression: ExpressionId) -> Option<(LoopBinding, ExpressionId)> {
+    fn plain_assignment(&self, expression: ExpressionId) -> Option<(ExpressionId, ExpressionId)> {
         match self.expressions.get(expression.index()) {
             Some(Expression::Assign {
                 kind: AssignmentKind::Assign,
                 lhs_expr,
                 rhs_expr,
-            }) => Some((self.loop_binding_from_expression(*lhs_expr)?, *rhs_expr)),
+            }) => Some((*lhs_expr, *rhs_expr)),
             _ => None,
         }
     }
@@ -1568,6 +1575,12 @@ impl<'a, 't> Parser<'a, 't> {
     }
 
     fn parse_expression(&mut self, precedence: Precedence) -> ParseResult<ExpressionId> {
+        self.with_expression_start(precedence, |parser| parser.parse_expression_at(precedence))
+    }
+
+    fn with_expression_start<T>(
+        &mut self, precedence: Precedence, parse: impl FnOnce(&mut Self) -> ParseResult<T>,
+    ) -> ParseResult<T> {
         // special case, probably not 1:1 with BYOND:tm: but operands below ternary precedence report the line their
         // whole expression starts on
         if precedence <= Precedence::Ternary
@@ -1577,13 +1590,13 @@ impl<'a, 't> Parser<'a, 't> {
             let outer = (self.expression_start, self.expression_cursor);
             self.expression_start = Some(SourceLine::of(location));
             self.expression_cursor = self.cursor;
-            let expression = self.parse_expression_at(precedence);
+            let expression = parse(self);
             (self.expression_start, self.expression_cursor) = outer;
 
             return expression;
         }
 
-        self.parse_expression_at(precedence)
+        parse(self)
     }
 
     fn parse_expression_at(&mut self, precedence: Precedence) -> ParseResult<ExpressionId> {
@@ -1655,23 +1668,30 @@ impl<'a, 't> Parser<'a, 't> {
     }
 
     fn parse_assignment_expression(&mut self) -> ParseResult<ExpressionId> {
+        let (expression, _) = self.parse_assignment_with_operator()?;
+
+        Ok(expression)
+    }
+
+    fn parse_assignment_with_operator(&mut self) -> ParseResult<(ExpressionId, Option<(Token<'a>, Location)>)> {
         let lhs_expr = self.parse_expression(Precedence::Ternary)?;
-        let Some((token, _)) = self.peek() else {
-            return Ok(lhs_expr);
+        let Some((token, location)) = self.peek() else {
+            return Ok((lhs_expr, None));
         };
 
         let Some(kind) = token_to_assignment_kind(&token) else {
-            return Ok(lhs_expr);
+            return Ok((lhs_expr, None));
         };
 
         self.advance()?;
         let rhs_expr = self.parse_expression(Precedence::Assignment)?;
-
-        Ok(self.make_expr(Expression::Assign {
+        let expression = self.make_expr(Expression::Assign {
             kind,
             lhs_expr,
             rhs_expr,
-        }))
+        });
+
+        Ok((expression, Some((token, location))))
     }
 
     fn parse_ternary_expression(&mut self) -> ParseResult<ExpressionId> {
@@ -2794,6 +2814,21 @@ mod tests {
             let error = parse(&tokens(source)).err().expect("a field is not a loop variable");
             assert!(matches!(error.kind, crate::error::ParseErrorKind::ExpectedLoopVariable));
             assert_eq!(error.location.begin.to_string(), "3:9");
+        }
+    }
+
+    #[test]
+    fn range_loops_without_a_start_expect_equals() {
+        for (source, got) in [
+            (fixture!("programs/range_loops_without_a_start_expect_equals.dm"), "to"),
+            (
+                fixture!("programs/range_loops_without_a_start_expect_equals-2.dm"),
+                "+=",
+            ),
+        ] {
+            let error = parse(&tokens(source)).err().expect("a range loop needs `= start`");
+            assert_eq!(error.kind.to_string(), format!("expected '=' got '{got}'"));
+            assert_eq!(error.location.begin.to_string(), "3:11");
         }
     }
 

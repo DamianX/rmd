@@ -1130,7 +1130,7 @@ impl<'a, 't> Parser<'a, 't> {
         }
 
         let (_, location) = self.peek().ok_or_else(ParseError::end_of_file)?;
-        let not_a_variable = ParseError::expected_loop_variable(location);
+        let not_a_variable = ParseError::expected_name(location);
         let (first, operator) =
             self.with_expression_start(Precedence::Assignment, Self::parse_assignment_with_operator)?;
         // `for(point as anything in grid)`
@@ -2812,7 +2812,7 @@ mod tests {
             fixture!("programs/loop_variable_errors_point_at_the_loop_header-2.dm"),
         ] {
             let error = parse(&tokens(source)).err().expect("a field is not a loop variable");
-            assert!(matches!(error.kind, crate::error::ParseErrorKind::ExpectedLoopVariable));
+            assert!(matches!(error.kind, crate::error::ParseErrorKind::ExpectedName));
             assert_eq!(error.location.begin.to_string(), "3:9");
         }
     }

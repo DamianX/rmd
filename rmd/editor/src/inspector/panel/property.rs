@@ -11,6 +11,7 @@ use ui::{color::byte, widgets::text_wrapped_colored};
 
 use crate::{
     document::{command::EditGroupId, instance::VarMutation},
+    frontend::dialog::SAVE_ERROR_COLOR,
     gizmo::{direction::direction_choices, transform::anchor_axis},
     inspector::session::EditScope,
     session::Session,
@@ -199,8 +200,9 @@ impl InspectorState {
         }
 
         if let Some(warning) = warning {
-            ui.text_disabled(warning);
+            draw_error(ui, warning);
         }
+
         draw_draft_error(ui, draft);
     }
 
@@ -371,7 +373,7 @@ impl InspectorState {
                 end_drag(&mut self.active_drag, &property.name);
             }
         } else {
-            ui.text_disabled("Color picker unavailable for this value");
+            draw_error(ui, "Color picker unavailable for this value");
         }
 
         if let Some(draft) = self.drafts.get_mut(&property.name) {
@@ -680,9 +682,12 @@ pub(super) fn draw_expression_input(
 
 pub(super) fn draw_draft_error(ui: &Ui, draft: &VariableDraft) {
     if let Some(error) = &draft.error {
-        let _style = ui.push_style_color(StyleColor::Text, [1.0, 0.35, 0.35, 1.0]);
-        ui.text_wrapped(error);
+        draw_error(ui, error);
     }
+}
+
+fn draw_error(ui: &Ui, error: &str) {
+    text_wrapped_colored(ui, SAVE_ERROR_COLOR, error);
 }
 
 pub(super) fn format_color(color: [f32; 4]) -> String {

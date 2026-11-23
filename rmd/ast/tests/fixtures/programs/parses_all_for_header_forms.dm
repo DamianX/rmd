@@ -7,3 +7,5 @@
     for(var/j in 1 to 5) continue
     for(var/key, value in list()) continue
     for(existing in world) continue
+    for(. in world) continue
+    for(. = 1 to 3) continue

@@ -2145,10 +2145,10 @@ impl<'a> IrModuleBuilder<'a> {
 
         self.set_current_block(taken);
         let next = self.emit_instr(IrNode::IterValue(iterator));
-        self.write_variable(value_var, taken, next);
+        self.write_loop_slot(value_var, taken, next);
         if let Some(key_var) = key_var {
             let next = self.emit_instr(IrNode::IterKey(iterator));
-            self.write_variable(key_var, taken, next);
+            self.write_loop_slot(key_var, taken, next);
         }
         self.lower_statements(body);
         self.terminate_current_block(IrNode::Branch(header));
@@ -2171,7 +2171,7 @@ impl<'a> IrModuleBuilder<'a> {
             None => self.intern_constant(Value::Num(1.0)),
         };
         if let Some(block) = self.current_block {
-            self.write_variable(var, block, start);
+            self.write_loop_slot(var, block, start);
         }
 
         let header = self.make_block();
@@ -2181,7 +2181,7 @@ impl<'a> IrModuleBuilder<'a> {
         self.terminate_current_block(IrNode::Branch(header));
 
         self.set_current_block(header);
-        let current = self.read_variable(var, header);
+        let current = self.read_loop_slot(var, header);
         let condition = self.emit_instr(IrNode::RangeTest { current, end, step });
         self.enter_loop(label, header, stepping, exit);
         self.terminate_current_block(IrNode::ConditionalBranch {
@@ -2198,13 +2198,13 @@ impl<'a> IrModuleBuilder<'a> {
         self.seal_block(stepping);
 
         self.set_current_block(stepping);
-        let current = self.read_variable(var, stepping);
+        let current = self.read_loop_slot(var, stepping);
         let next = self.emit_instr(IrNode::Binary {
             op: BinaryOp::Add,
             lhs: current,
             rhs: step,
         });
-        self.write_variable(var, stepping, next);
+        self.write_loop_slot(var, stepping, next);
         self.terminate_current_block(IrNode::Branch(header));
         self.seal_block(header);
 
@@ -2212,22 +2212,61 @@ impl<'a> IrModuleBuilder<'a> {
         self.resume(exit);
     }
 
-    fn binding(&mut self, binding: &ast::LoopBinding) -> BindingId {
+    fn binding(&mut self, binding: &ast::LoopBinding) -> LoopSlot {
+        // `.` is reserved, so a binding with that name is always the return value
+        if !binding.declares && binding.spec.name.as_str() == "." {
+            // inside `spawn` the return value is a local copy
+            return match self.spawn_return {
+                Some(var) => LoopSlot::Var(var),
+                None => LoopSlot::ReturnValue,
+            };
+        }
+
         if binding.declares {
             let spec = self.spec(&binding.spec);
 
-            return self.declare_var(spec);
+            return LoopSlot::Var(self.declare_var(spec));
         }
 
-        match self.lookup(&binding.spec.name) {
+        LoopSlot::Var(match self.lookup(&binding.spec.name) {
             Some(var) => var,
             None => {
                 let spec = self.spec(&binding.spec);
 
                 self.declare_var(spec)
             },
+        })
+    }
+
+    fn write_loop_slot(&mut self, slot: LoopSlot, block: IrNodeId, value: IrNodeId) {
+        match slot {
+            LoopSlot::Var(var) => self.write_variable(var, block, value),
+            LoopSlot::ReturnValue => {
+                self.emit_instr(IrNode::StoreBuiltin {
+                    builtin: Builtin::ThisProc,
+                    value,
+                });
+            },
         }
     }
+
+    fn read_loop_slot(&mut self, slot: LoopSlot, block: IrNodeId) -> IrNodeId {
+        match slot {
+            LoopSlot::Var(var) => self.read_variable(var, block),
+            LoopSlot::ReturnValue => self.emit_instr(IrNode::Builtin(Builtin::ThisProc)),
+        }
+    }
+}
+
+/// where a `for` loop writes its current entry
+///
+/// a local is written through its `BindingId`, but the return value `.` has none
+#[derive(Clone, Copy)]
+enum LoopSlot {
+    /// a local variable, or `.` inside `spawn`, which gets its own copy of the return value
+    Var(BindingId),
+    /// `for(. in list)`, written with `StoreBuiltin`
+    ReturnValue,
 }
 
 struct ControlTarget {

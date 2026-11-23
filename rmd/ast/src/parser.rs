@@ -1306,6 +1306,8 @@ impl<'a, 't> Parser<'a, 't> {
     fn expression_identifier(&self, expression: ExpressionId) -> ParseResult<Identifier> {
         match self.expressions.get(expression.index()) {
             Some(Expression::Identifier(name)) => Ok(name.clone()),
+            // `for(. in paths)`
+            Some(Expression::Builtin(Builtin::ThisProc)) => Ok(Identifier::from(".")),
             Some(Expression::Grouped(inner)) => self.expression_identifier(*inner),
             _ => Err(ParseError::expected_expression(Location::default())),
         }
@@ -2748,7 +2750,7 @@ mod tests {
     fn parses_all_for_header_forms() {
         let ast = parse_source(fixture!("programs/parses_all_for_header_forms.dm"));
         let body = proc_body(&ast);
-        assert_eq!(body.len(), 7);
+        assert_eq!(body.len(), 9);
         assert!(matches!(&body[0], Statement::For(loop_) if matches!(**loop_, ForLoop::Standard { init: None, .. })));
         assert!(
             matches!(&body[1], Statement::For(loop_) if matches!(**loop_, ForLoop::Standard { init: Some(_), .. }))
@@ -2762,6 +2764,12 @@ mod tests {
         );
         assert!(matches!(&body[5], Statement::For(loop_) if matches!(**loop_, ForLoop::List { key: Some(_), .. })));
         assert!(matches!(&body[6], Statement::For(loop_) if matches!(**loop_, ForLoop::List { key: None, .. })));
+        assert!(
+            matches!(&body[7], Statement::For(loop_) if matches!(&**loop_, ForLoop::List { value: LoopBinding { spec, declares: false }, .. } if spec.name.as_str() == "."))
+        );
+        assert!(
+            matches!(&body[8], Statement::For(loop_) if matches!(&**loop_, ForLoop::Range { variable: LoopBinding { spec, declares: false }, .. } if spec.name.as_str() == "."))
+        );
     }
 
     #[test]

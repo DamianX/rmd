@@ -2832,6 +2832,14 @@ fn descending_ranges_use_the_steps_sign() {
 }
 
 #[test]
+fn return_value_as_a_loop_variable() {
+    assert_eq!(
+        run(fixture!("programs/return_value_as_a_loop_variable.dm"), "test",),
+        GenericValue::from("2 b 3 6")
+    );
+}
+
+#[test]
 fn switch_cases_match_every_listed_value() {
     assert_eq!(
         run(fixture!("programs/switch_cases_match_every_listed_value.dm"), "test",),

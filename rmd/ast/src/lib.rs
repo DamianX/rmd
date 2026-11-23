@@ -215,12 +215,13 @@ pub enum ForLoop {
 
 #[derive(Debug, Clone)]
 pub enum LoopBinding {
-    Var {
-        spec: VarSpec,
-        declares: bool,
+    /// `for(var/mob/M in world)`
+    Declare(VarSpec),
+    /// `for(M in world)`, `for(. in L)`, `for(holder.entry in L)`
+    Assign {
+        target: ExpressionId,
+        as_type: Option<TypeSpec>,
     },
-    /// `for(. in list)`
-    ReturnValue,
 }
 
 #[derive(Debug, Clone)]

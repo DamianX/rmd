@@ -1071,10 +1071,7 @@ impl<'a, 't> Parser<'a, 't> {
 
         if self.starts_var_path() {
             let spec = self.parse_loop_spec()?;
-            let binding = LoopBinding::Var {
-                spec: spec.clone(),
-                declares: true,
-            };
+            let binding = LoopBinding::Declare(spec.clone());
 
             if self.consume(Token::Equal) {
                 let start = self.parse_expression(Precedence::Assignment)?;
@@ -1096,10 +1093,7 @@ impl<'a, 't> Parser<'a, 't> {
 
             if self.consume(Token::Comma) {
                 let checkpoint = self.cursor;
-                if self.can_start_loop_binding()
-                    && let Ok(value) = self.parse_loop_binding()
-                    && self.consume(Token::In)
-                {
+                if let Some(value) = self.parse_keyed_loop_value(true)? {
                     return self.parse_for_membership(Some(binding), value);
                 }
 
@@ -1141,27 +1135,25 @@ impl<'a, 't> Parser<'a, 't> {
                 let (got, location) = operator.unwrap_or(to);
                 ParseError::unexpected("=", got, location)
             })?;
-            let binding = self.loop_binding_from_expression(variable).ok_or(not_a_variable)?;
+            let target = self.loop_place(variable).ok_or(not_a_variable)?;
+            let binding = LoopBinding::Assign { target, as_type: None };
 
             return self.finish_range_for(binding, start);
         }
 
         if self.consume(Token::In) {
-            let mut binding = self.loop_binding_from_expression(first).ok_or(not_a_variable)?;
-            if let LoopBinding::Var { spec, .. } = &mut binding {
-                spec.as_type = as_type;
-            }
+            let target = self.loop_place(first).ok_or(not_a_variable)?;
+            let binding = LoopBinding::Assign { target, as_type };
 
             return self.parse_for_membership(None, binding);
         }
 
         if self.consume(Token::Comma) {
             let checkpoint = self.cursor;
-            if self.can_start_loop_binding()
-                && let Ok(value) = self.parse_loop_binding()
-                && self.consume(Token::In)
-            {
-                let key = self.loop_binding_from_expression(first).ok_or(not_a_variable)?;
+            if let Some(value) = self.parse_keyed_loop_value(false)? {
+                let target = self.loop_place(first).ok_or(not_a_variable)?;
+                let key = LoopBinding::Assign { target, as_type: None };
+
                 return self.parse_for_membership(Some(key), value);
             }
 
@@ -1174,7 +1166,9 @@ impl<'a, 't> Parser<'a, 't> {
         }
 
         if self.consume(Token::ParenRight) {
-            let binding = self.loop_binding_from_expression(first).ok_or(not_a_variable)?;
+            let target = self.loop_place(first).ok_or(not_a_variable)?;
+            let binding = LoopBinding::Assign { target, as_type: None };
+
             return self.finish_list_for(None, binding, None);
         }
 
@@ -1234,15 +1228,58 @@ impl<'a, 't> Parser<'a, 't> {
         })))
     }
 
-    fn can_start_loop_binding(&self) -> bool {
-        self.starts_var_path() || self.peek().is_some_and(|(token, _)| token.is_identifier())
-    }
+    /// `Ok(None)` when what follows the comma is not a loop value, so the header is a standard `for`
+    fn parse_keyed_loop_value(&mut self, is_declaring: bool) -> ParseResult<Option<LoopBinding>> {
+        if self.starts_var_path() {
+            let Ok(spec) = self.parse_loop_spec() else {
+                return Ok(None);
+            };
 
-    fn parse_loop_binding(&mut self) -> ParseResult<LoopBinding> {
-        let declares = self.starts_var_path();
-        let spec = self.parse_loop_spec()?;
+            return Ok(self.consume(Token::In).then_some(LoopBinding::Declare(spec)));
+        }
 
-        Ok(LoopBinding::Var { spec, declares })
+        let Some((_, location)) = self.peek() else {
+            return Ok(None);
+        };
+
+        let Ok(value) = self.parse_expression(Precedence::Assignment) else {
+            return Ok(None);
+        };
+
+        let as_type = if self.consume(Token::As) {
+            let Ok(as_type) = self.parse_type_spec() else {
+                return Ok(None);
+            };
+
+            Some(as_type)
+        } else {
+            None
+        };
+
+        if !self.consume(Token::In) {
+            return Ok(None);
+        }
+
+        // `for(i = 0, i + 1 in L, i++)`
+        let Some(target) = self.loop_place(value) else {
+            return Ok(None);
+        };
+
+        if !is_declaring {
+            return Ok(Some(LoopBinding::Assign { target, as_type }));
+        }
+
+        let Some(Expression::Identifier(name)) = self.expressions.get(target.index()) else {
+            return Err(ParseError::expected_name(location));
+        };
+
+        Ok(Some(LoopBinding::Declare(VarSpec {
+            name: name.clone(),
+            var_type: None,
+            modifiers: VarModifiers::default(),
+            dimensions: Vec::new(),
+            as_type,
+        })))
     }
 
     fn parse_loop_spec(&mut self) -> ParseResult<VarSpec> {
@@ -1253,21 +1290,13 @@ impl<'a, 't> Parser<'a, 't> {
         Ok(spec)
     }
 
-    fn loop_binding_from_expression(&self, expression: ExpressionId) -> Option<LoopBinding> {
+    fn loop_place(&self, expression: ExpressionId) -> Option<ExpressionId> {
         match self.expressions.get(expression.index())? {
-            Expression::Identifier(name) => Some(LoopBinding::Var {
-                spec: VarSpec {
-                    name: name.clone(),
-                    var_type: None,
-                    modifiers: VarModifiers::default(),
-                    dimensions: Vec::new(),
-                    as_type: None,
-                },
-                declares: false,
-            }),
-            // `for(. in paths)`
-            Expression::Builtin(Builtin::ThisProc) => Some(LoopBinding::ReturnValue),
-            Expression::Grouped(inner) => self.loop_binding_from_expression(*inner),
+            Expression::Identifier(_)
+            | Expression::Field { .. }
+            | Expression::Index { .. }
+            | Expression::Builtin(Builtin::ThisProc) => Some(expression),
+            Expression::Grouped(inner) => self.loop_place(*inner),
             _ => None,
         }
     }
@@ -2200,6 +2229,8 @@ mod tests {
         };
     }
 
+    use crate::error::ParseErrorKind;
+
     use super::*;
 
     fn tokens(source: &str) -> Vec<(Token<'_>, Location)> {
@@ -2536,15 +2567,14 @@ mod tests {
         };
 
         let ForLoop::List {
-            value: LoopBinding::Var { spec, declares },
+            value: LoopBinding::Assign { as_type, .. },
             ..
         } = loop_.as_ref()
         else {
             panic!("expected a list loop over a variable")
         };
 
-        assert!(!declares);
-        assert!(spec.as_type.is_some());
+        assert!(as_type.is_some());
     }
 
     #[test]
@@ -2790,30 +2820,42 @@ mod tests {
         );
         assert!(matches!(&body[2], Statement::For(loop_) if matches!(**loop_, ForLoop::Standard { step: None, .. })));
         assert!(
-            matches!(&body[3], Statement::For(loop_) if matches!(**loop_, ForLoop::Range { variable: LoopBinding::Var { declares: false, .. }, .. }))
+            matches!(&body[3], Statement::For(loop_) if matches!(**loop_, ForLoop::Range { variable: LoopBinding::Assign { .. }, .. }))
         );
         assert!(
-            matches!(&body[4], Statement::For(loop_) if matches!(**loop_, ForLoop::Range { variable: LoopBinding::Var { declares: true, .. }, .. }))
+            matches!(&body[4], Statement::For(loop_) if matches!(**loop_, ForLoop::Range { variable: LoopBinding::Declare(_), .. }))
         );
         assert!(matches!(&body[5], Statement::For(loop_) if matches!(**loop_, ForLoop::List { key: Some(_), .. })));
         assert!(matches!(&body[6], Statement::For(loop_) if matches!(**loop_, ForLoop::List { key: None, .. })));
+        let is_this_proc =
+            |target: &ExpressionId| matches!(ast.get_expr(*target), Some(Expression::Builtin(Builtin::ThisProc)));
         assert!(
-            matches!(&body[7], Statement::For(loop_) if matches!(**loop_, ForLoop::List { value: LoopBinding::ReturnValue, .. }))
+            matches!(&body[7], Statement::For(loop_) if matches!(&**loop_, ForLoop::List { value: LoopBinding::Assign { target, .. }, .. } if is_this_proc(target)))
         );
         assert!(
-            matches!(&body[8], Statement::For(loop_) if matches!(**loop_, ForLoop::Range { variable: LoopBinding::ReturnValue, .. }))
+            matches!(&body[8], Statement::For(loop_) if matches!(&**loop_, ForLoop::Range { variable: LoopBinding::Assign { target, .. }, .. } if is_this_proc(target)))
         );
     }
 
     #[test]
     fn loop_variable_errors_point_at_the_loop_header() {
-        for source in [
-            fixture!("programs/loop_variable_errors_point_at_the_loop_header.dm"),
-            fixture!("programs/loop_variable_errors_point_at_the_loop_header-2.dm"),
+        for (source, location) in [
+            (
+                fixture!("programs/loop_variable_errors_point_at_the_loop_header.dm"),
+                "3:9",
+            ),
+            (
+                fixture!("programs/loop_variable_errors_point_at_the_loop_header-2.dm"),
+                "3:9",
+            ),
+            (
+                fixture!("programs/loop_variable_errors_point_at_the_loop_header-3.dm"),
+                "3:16",
+            ),
         ] {
-            let error = parse(&tokens(source)).err().expect("a field is not a loop variable");
-            assert!(matches!(error.kind, crate::error::ParseErrorKind::ExpectedName));
-            assert_eq!(error.location.begin.to_string(), "3:9");
+            let error = parse(&tokens(source)).err().expect("not a loop variable");
+            assert!(matches!(error.kind, ParseErrorKind::ExpectedName));
+            assert_eq!(error.location.begin.to_string(), location);
         }
     }
 

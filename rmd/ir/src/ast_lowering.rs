@@ -2117,7 +2117,7 @@ impl<'a> IrModuleBuilder<'a> {
         let key_var = key.as_ref().map(|key| self.binding(key));
         // `for(var/obj/O as anything in L)` keeps every entry, not only the objs
         let ty = match value {
-            ast::LoopBinding::Var { spec, .. } => {
+            ast::LoopBinding::Declare(spec) => {
                 let is_unfiltered = spec
                     .as_type
                     .as_ref()
@@ -2125,7 +2125,7 @@ impl<'a> IrModuleBuilder<'a> {
 
                 spec.var_type.clone().filter(|_| !is_unfiltered)
             },
-            ast::LoopBinding::ReturnValue => None,
+            ast::LoopBinding::Assign { .. } => None,
         };
         let iterator = self.emit_instr(IrNode::IterInit {
             list,
@@ -2233,49 +2233,29 @@ impl<'a> IrModuleBuilder<'a> {
 
     fn binding(&mut self, binding: &ast::LoopBinding) -> LoopSlot {
         match binding {
-            // inside `spawn` the return value is a local copy
-            ast::LoopBinding::ReturnValue => match self.spawn_return {
-                Some(var) => LoopSlot::Var(var),
-                None => LoopSlot::ReturnValue,
-            },
-            ast::LoopBinding::Var { spec, declares: true } => {
+            ast::LoopBinding::Declare(spec) => {
                 let spec = self.spec(spec);
 
-                LoopSlot::Var(self.declare_var(spec))
+                LoopSlot::Local(self.declare_var(spec))
             },
-            ast::LoopBinding::Var { spec, declares: false } => LoopSlot::Var(match self.lookup(&spec.name) {
-                Some(var) => var,
-                None => {
-                    let spec = self.spec(spec);
-
-                    self.declare_var(spec)
-                },
-            }),
+            ast::LoopBinding::Assign { target, .. } => LoopSlot::Place(*target),
         }
     }
 
     fn write_loop_slot(&mut self, slot: LoopSlot, block: IrNodeId, value: IrNodeId) {
         match slot {
-            LoopSlot::Var(var) => self.write_variable(var, block, value),
-            LoopSlot::ReturnValue => {
-                self.emit_instr(IrNode::StoreBuiltin {
-                    builtin: Builtin::ThisProc,
-                    value,
-                });
+            LoopSlot::Local(var) => self.write_variable(var, block, value),
+            LoopSlot::Place(target) => {
+                self.store(target, value);
             },
         }
     }
 }
 
-/// where a `for` loop writes its current entry
-///
-/// a local is written through its `BindingId`, but the return value `.` has none
 #[derive(Clone, Copy)]
 enum LoopSlot {
-    /// a local variable, or `.` inside `spawn`, which gets its own copy of the return value
-    Var(BindingId),
-    /// `for(. in list)`, written with `StoreBuiltin`
-    ReturnValue,
+    Local(BindingId),
+    Place(ExpressionId),
 }
 
 struct ControlTarget {

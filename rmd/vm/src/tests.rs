@@ -2862,6 +2862,12 @@ fn loop_variables_after_the_loop_follow_byond() {
         ("list_typed_filter", "x=null"),
         ("list_null_source", "x=null"),
         ("dot_results", "exhausted=null broke='2' range='4'"),
+        ("keyed_dot_value", "seen='a'='1','b'='2', dot=null k=null"),
+        ("keyed_field_value", "'a'='1','b'='2', after=null"),
+        ("field_list", "'1','2', after=null"),
+        ("field_range", "'1','2','3', after='3'"),
+        ("var_key_declares_value", "src.v='v0'"),
+        ("bare_name_is_a_field", "src.x=null"),
     ] {
         assert_eq!(run(source, name), GenericValue::from(expected), "{name}");
     }

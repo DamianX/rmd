@@ -1,3 +1,3 @@
 
 /proc/test()
-    for(holder.entry in world) continue
+    for(f() in world) continue

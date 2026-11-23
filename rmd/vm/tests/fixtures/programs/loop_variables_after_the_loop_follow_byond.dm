@@ -137,3 +137,47 @@
 		continue
 /proc/dot_results()
 	return "exhausted=[d(dot_exhausted())] broke=[d(dot_broke())] range=[d(dot_range())]"
+
+// targets that are not plain locals
+/datum/loop_holder
+	var/v = "v0"
+	var/x = "field"
+/datum/loop_holder/proc/var_key_declares_value()
+	for(var/k, v in list("a" = 1))
+		continue
+	return "src.v=[d(src.v)]"
+/datum/loop_holder/proc/bare_name_is_a_field()
+	for(x in list(1, 2))
+		continue
+	return "src.x=[d(src.x)]"
+/proc/keyed_dot_value()
+	var/k
+	var/seen = ""
+	for(k, . in list("a" = 1, "b" = 2))
+		seen += "[d(k)]=[d(.)],"
+	return "seen=[seen] dot=[d(.)] k=[d(k)]"
+/proc/keyed_field_value()
+	var/datum/loop_holder/h = new
+	var/k
+	var/out = ""
+	for(k, h.v in list("a" = 1, "b" = 2))
+		out += "[d(k)]=[d(h.v)],"
+	return "[out] after=[d(h.v)]"
+/proc/field_list()
+	var/datum/loop_holder/h = new
+	var/out = ""
+	for(h.v in list(1, 2))
+		out += "[d(h.v)],"
+	return "[out] after=[d(h.v)]"
+/proc/field_range()
+	var/datum/loop_holder/h = new
+	var/out = ""
+	for(h.v = 1 to 3)
+		out += "[d(h.v)],"
+	return "[out] after=[d(h.v)]"
+/proc/var_key_declares_value()
+	var/datum/loop_holder/h = new
+	return h.var_key_declares_value()
+/proc/bare_name_is_a_field()
+	var/datum/loop_holder/h = new
+	return h.bare_name_is_a_field()

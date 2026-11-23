@@ -1070,8 +1070,11 @@ impl<'a, 't> Parser<'a, 't> {
         }
 
         if self.starts_var_path() {
-            let binding = self.parse_loop_binding()?;
-            let spec = binding.spec.clone();
+            let spec = self.parse_loop_spec()?;
+            let binding = LoopBinding::Var {
+                spec: spec.clone(),
+                declares: true,
+            };
 
             if self.consume(Token::Equal) {
                 let start = self.parse_expression(Precedence::Assignment)?;
@@ -1138,7 +1141,10 @@ impl<'a, 't> Parser<'a, 't> {
 
         if self.consume(Token::In) {
             let mut binding = self.loop_binding_from_expression(first).ok_or(not_a_variable)?;
-            binding.spec.as_type = as_type;
+            if let LoopBinding::Var { spec, .. } = &mut binding {
+                spec.as_type = as_type;
+            }
+
             return self.parse_for_membership(None, binding);
         }
 
@@ -1227,25 +1233,36 @@ impl<'a, 't> Parser<'a, 't> {
 
     fn parse_loop_binding(&mut self) -> ParseResult<LoopBinding> {
         let declares = self.starts_var_path();
+        let spec = self.parse_loop_spec()?;
+
+        Ok(LoopBinding::Var { spec, declares })
+    }
+
+    fn parse_loop_spec(&mut self) -> ParseResult<VarSpec> {
         let path = self.parse_path()?;
         let mut spec = self.var_spec_from_path(&path);
         self.parse_var_spec_suffix(&mut spec)?;
 
-        Ok(LoopBinding { spec, declares })
+        Ok(spec)
     }
 
     fn loop_binding_from_expression(&self, expression: ExpressionId) -> Option<LoopBinding> {
-        let name = self.expression_identifier(expression)?;
-        Some(LoopBinding {
-            spec: VarSpec {
-                name,
-                var_type: None,
-                modifiers: VarModifiers::default(),
-                dimensions: Vec::new(),
-                as_type: None,
-            },
-            declares: false,
-        })
+        match self.expressions.get(expression.index())? {
+            Expression::Identifier(name) => Some(LoopBinding::Var {
+                spec: VarSpec {
+                    name: name.clone(),
+                    var_type: None,
+                    modifiers: VarModifiers::default(),
+                    dimensions: Vec::new(),
+                    as_type: None,
+                },
+                declares: false,
+            }),
+            // `for(. in paths)`
+            Expression::Builtin(Builtin::ThisProc) => Some(LoopBinding::ReturnValue),
+            Expression::Grouped(inner) => self.loop_binding_from_expression(*inner),
+            _ => None,
+        }
     }
 
     fn assignment_loop_binding(&self, expression: ExpressionId) -> Option<(LoopBinding, ExpressionId)> {
@@ -1303,16 +1320,6 @@ impl<'a, 't> Parser<'a, 't> {
             step,
             body,
         })))
-    }
-
-    fn expression_identifier(&self, expression: ExpressionId) -> Option<Identifier> {
-        match self.expressions.get(expression.index()) {
-            Some(Expression::Identifier(name)) => Some(name.clone()),
-            // `for(. in paths)`
-            Some(Expression::Builtin(Builtin::ThisProc)) => Some(Identifier::from(".")),
-            Some(Expression::Grouped(inner)) => self.expression_identifier(*inner),
-            _ => None,
-        }
     }
 
     fn parse_switch_statement(&mut self) -> ParseResult<Statement> {
@@ -2508,12 +2515,16 @@ mod tests {
             panic!("expected a for loop")
         };
 
-        let ForLoop::List { value, .. } = loop_.as_ref() else {
-            panic!("expected a list loop")
+        let ForLoop::List {
+            value: LoopBinding::Var { spec, declares },
+            ..
+        } = loop_.as_ref()
+        else {
+            panic!("expected a list loop over a variable")
         };
 
-        assert!(!value.declares);
-        assert!(value.spec.as_type.is_some());
+        assert!(!declares);
+        assert!(spec.as_type.is_some());
     }
 
     #[test]
@@ -2759,18 +2770,18 @@ mod tests {
         );
         assert!(matches!(&body[2], Statement::For(loop_) if matches!(**loop_, ForLoop::Standard { step: None, .. })));
         assert!(
-            matches!(&body[3], Statement::For(loop_) if matches!(**loop_, ForLoop::Range { variable: LoopBinding { declares: false, .. }, .. }))
+            matches!(&body[3], Statement::For(loop_) if matches!(**loop_, ForLoop::Range { variable: LoopBinding::Var { declares: false, .. }, .. }))
         );
         assert!(
-            matches!(&body[4], Statement::For(loop_) if matches!(**loop_, ForLoop::Range { variable: LoopBinding { declares: true, .. }, .. }))
+            matches!(&body[4], Statement::For(loop_) if matches!(**loop_, ForLoop::Range { variable: LoopBinding::Var { declares: true, .. }, .. }))
         );
         assert!(matches!(&body[5], Statement::For(loop_) if matches!(**loop_, ForLoop::List { key: Some(_), .. })));
         assert!(matches!(&body[6], Statement::For(loop_) if matches!(**loop_, ForLoop::List { key: None, .. })));
         assert!(
-            matches!(&body[7], Statement::For(loop_) if matches!(&**loop_, ForLoop::List { value: LoopBinding { spec, declares: false }, .. } if spec.name.as_str() == "."))
+            matches!(&body[7], Statement::For(loop_) if matches!(**loop_, ForLoop::List { value: LoopBinding::ReturnValue, .. }))
         );
         assert!(
-            matches!(&body[8], Statement::For(loop_) if matches!(&**loop_, ForLoop::Range { variable: LoopBinding { spec, declares: false }, .. } if spec.name.as_str() == "."))
+            matches!(&body[8], Statement::For(loop_) if matches!(**loop_, ForLoop::Range { variable: LoopBinding::ReturnValue, .. }))
         );
     }
 

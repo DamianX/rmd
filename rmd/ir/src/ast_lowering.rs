@@ -2116,12 +2116,17 @@ impl<'a> IrModuleBuilder<'a> {
         let value_var = self.binding(value);
         let key_var = key.as_ref().map(|key| self.binding(key));
         // `for(var/obj/O as anything in L)` keeps every entry, not only the objs
-        let is_unfiltered = value
-            .spec
-            .as_type
-            .as_ref()
-            .is_some_and(|spec| spec.flags.contains(InputType::ANYTHING));
-        let ty = value.spec.var_type.clone().filter(|_| !is_unfiltered);
+        let ty = match value {
+            ast::LoopBinding::Var { spec, .. } => {
+                let is_unfiltered = spec
+                    .as_type
+                    .as_ref()
+                    .is_some_and(|as_type| as_type.flags.contains(InputType::ANYTHING));
+
+                spec.var_type.clone().filter(|_| !is_unfiltered)
+            },
+            ast::LoopBinding::ReturnValue => None,
+        };
         let iterator = self.emit_instr(IrNode::IterInit {
             list,
             ty: ty.map(Box::new),
@@ -2227,29 +2232,26 @@ impl<'a> IrModuleBuilder<'a> {
     }
 
     fn binding(&mut self, binding: &ast::LoopBinding) -> LoopSlot {
-        // `.` is reserved, so a binding with that name is always the return value
-        if !binding.declares && binding.spec.name.as_str() == "." {
+        match binding {
             // inside `spawn` the return value is a local copy
-            return match self.spawn_return {
+            ast::LoopBinding::ReturnValue => match self.spawn_return {
                 Some(var) => LoopSlot::Var(var),
                 None => LoopSlot::ReturnValue,
-            };
-        }
-
-        if binding.declares {
-            let spec = self.spec(&binding.spec);
-
-            return LoopSlot::Var(self.declare_var(spec));
-        }
-
-        LoopSlot::Var(match self.lookup(&binding.spec.name) {
-            Some(var) => var,
-            None => {
-                let spec = self.spec(&binding.spec);
-
-                self.declare_var(spec)
             },
-        })
+            ast::LoopBinding::Var { spec, declares: true } => {
+                let spec = self.spec(spec);
+
+                LoopSlot::Var(self.declare_var(spec))
+            },
+            ast::LoopBinding::Var { spec, declares: false } => LoopSlot::Var(match self.lookup(&spec.name) {
+                Some(var) => var,
+                None => {
+                    let spec = self.spec(spec);
+
+                    self.declare_var(spec)
+                },
+            }),
+        }
     }
 
     fn write_loop_slot(&mut self, slot: LoopSlot, block: IrNodeId, value: IrNodeId) {

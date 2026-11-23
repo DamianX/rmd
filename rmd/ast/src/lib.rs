@@ -214,9 +214,13 @@ pub enum ForLoop {
 }
 
 #[derive(Debug, Clone)]
-pub struct LoopBinding {
-    pub spec: VarSpec,
-    pub declares: bool,
+pub enum LoopBinding {
+    Var {
+        spec: VarSpec,
+        declares: bool,
+    },
+    /// `for(. in list)`
+    ReturnValue,
 }
 
 #[derive(Debug, Clone)]

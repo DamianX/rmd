@@ -3,7 +3,7 @@ use base::{
     location::SourceLine,
     path::{PathFlags, TreePath},
     types::{IMPROPER_MACRO, Identifier, PROPER_MACRO, ProcId, TEXT_MACRO, Value, strip_text_macros},
-    vars,
+    vars::{self, NAME},
 };
 use std::{
     borrow::Cow,
@@ -476,7 +476,7 @@ impl<'a> Evaluator<'a> {
             .map_err(|kind| self.fault(kind))
     }
 
-    pub fn text_of(&mut self, value: &GenericValue) -> String {
+    fn embedded_text(&mut self, value: &GenericValue, is_leading: bool) -> String {
         let GenericValue::Object(id) = value else {
             return value.display();
         };
@@ -492,22 +492,28 @@ impl<'a> Evaluator<'a> {
                 .map_or_else(|| value.display(), |decl| decl.path.spelled());
         }
 
-        let name = match self.read_field(value.clone(), &Identifier::from("name")) {
+        let name = match self.read_field(value.clone(), &Identifier::from(NAME)) {
             Ok(GenericValue::Text(name)) => name,
             _ => return String::new(),
         };
+
+        let article = if is_leading { "The" } else { "the" };
         let marked = |code: char| name.strip_prefix(TEXT_MACRO).and_then(|rest| rest.strip_prefix(code));
         let text = if let Some(rest) = marked(PROPER_MACRO) {
             rest.to_string()
         } else if let Some(rest) = marked(IMPROPER_MACRO) {
-            format!("the {rest}")
+            format!("{article} {rest}")
         } else if name.is_empty() || name.starts_with(|ch: char| ch.is_ascii_uppercase()) {
             name.to_string()
         } else {
-            format!("the {name}")
+            format!("{article} {name}")
         };
 
         strip_text_macros(&text)
+    }
+
+    pub fn text_of(&mut self, value: &GenericValue) -> String {
+        self.embedded_text(value, false)
     }
 
     pub fn text(&mut self, text: String) -> Result<GenericValue> {
@@ -813,7 +819,8 @@ impl<'a> Evaluator<'a> {
                                 self.is_cacheable = false;
                             }
 
-                            output.push_str(&self.text_of(&value));
+                            let is_leading = output.is_empty();
+                            output.push_str(&self.embedded_text(&value, is_leading));
                         }
 
                         if output.len() > self.limits.text_bytes {

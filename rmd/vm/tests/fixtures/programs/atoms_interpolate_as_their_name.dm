@@ -16,6 +16,8 @@
 /mob/person
 	name = "Bob"
 
+/obj/rubber_duck
+
 /proc/atoms()
 	var/obj/lower/L = new
 	var/obj/upper/U = new
@@ -46,3 +48,7 @@
 /proc/joined()
 	var/list/a = atoms()
 	return jointext(list(a[1], a[2]), ",")
+
+/proc/defaulted()
+	var/obj/rubber_duck/D = new
+	return "[D] | x [D]"

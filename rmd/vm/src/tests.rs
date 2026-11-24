@@ -4854,7 +4854,7 @@ fn text_positions_count_bytes() {
 fn atoms_interpolate_as_their_name() {
     let source = fixture!("programs/atoms_interpolate_as_their_name.dm");
     let expected = [
-        ("interpolated", "the widget | Widget | the Widget | widget |  | Bob"),
+        ("interpolated", "The widget | Widget | the Widget | widget |  | Bob"),
         (
             "prefixed",
             "x the widget | x Widget | x the Widget | x widget | x  | x Bob",
@@ -4862,6 +4862,7 @@ fn atoms_interpolate_as_their_name() {
         ("encoded", r#"["the widget","Widget","the Widget","widget","","Bob"]"#),
         ("names", r#"["widget","Widget","widget"]"#),
         ("joined", "the widget,Widget"),
+        ("defaulted", "The rubber duck | x the rubber duck"),
     ];
     for (name, text) in expected {
         assert_eq!(run_text_proc(source, name).expect(name), text, "{name}");

@@ -3,7 +3,7 @@ pub mod error;
 use base::{
     path::{PathFlags, TreePath},
     types::{Identifier, InputType, TypeSpec, Value},
-    vars,
+    vars::{self, NAME},
 };
 use std::str::FromStr;
 
@@ -57,10 +57,51 @@ impl<'a> Analyzer<'a> {
 
     pub fn finish(mut self) -> (ObjectTree, Vec<SemaError>) {
         self.tree.resolve_parent_types();
+        self.resolve_names();
         self.resolve_var_types();
         self.tree.number_shared_vars();
 
         (self.tree, self.errors)
+    }
+
+    fn resolve_names(&mut self) {
+        let Some(atom_ty) = self.tree.roots().atom else {
+            return;
+        };
+
+        let name = Identifier::from(NAME);
+        let resolved = self
+            .tree
+            .iter()
+            .filter_map(|decl| {
+                let is_default_named =
+                    decl.id != atom_ty && decl.vars.get(&name).is_none() && self.tree.is_subtype_of(decl.id, atom_ty);
+                if !is_default_named {
+                    return None;
+                }
+
+                let inherited = self.tree.var_inherited(decl.id, &name);
+                let default = decl.path.name()?.as_str().replace('_', " ");
+                let var = VarDecl {
+                    name: name.clone(),
+                    declared_type: inherited.and_then(|var| var.declared_type.clone()),
+                    modifiers: inherited.map(|var| var.modifiers).unwrap_or_default(),
+                    value: Value::Text(default),
+                    declared: false,
+                    location: decl.location.get(),
+                    resolved_type: None,
+                    shared: None,
+                };
+
+                Some((decl.id, var))
+            })
+            .collect::<Vec<_>>();
+
+        for (id, var) in resolved {
+            if let Some(decl) = self.tree.get_mut(id) {
+                decl.vars.insert(name.clone(), var);
+            }
+        }
     }
 
     fn resolve_var_types(&mut self) {

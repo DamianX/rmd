@@ -1179,19 +1179,6 @@ impl<'a> IrModuleBuilder<'a> {
                         }
 
                         let mut lowered = self.args(args);
-                        if matches!(self.ast.get_expr(*callee), Some(Expression::Identifier(name)) if name.as_str() == "istype")
-                            && args.len() == 1
-                            && let Some(ty) = args
-                                .first()
-                                .and_then(|argument| argument.value)
-                                .and_then(|expression| self.inferred_type(expression))
-                        {
-                            lowered.push(Argument {
-                                key: None,
-                                value: Some(self.intern_constant(Value::Path(ty))),
-                            });
-                        }
-
                         if matches!(self.ast.get_expr(*callee), Some(Expression::Identifier(name)) if name.as_str() == "locate")
                             && args.is_empty()
                         {
@@ -1488,17 +1475,6 @@ impl<'a> IrModuleBuilder<'a> {
             Expression::ContextMacro(ContextMacro::Proc) => {
                 self.current_proc.as_ref()?.name().map(Identifier::to_string)
             },
-            _ => None,
-        }
-    }
-
-    fn inferred_type(&self, expression: ExpressionId) -> Option<TreePath> {
-        match self.ast.get_expr(expression) {
-            Some(Expression::Identifier(name)) => self
-                .lookup(name)
-                .and_then(|binding| self.vars.get(binding.0 as usize))
-                .and_then(|spec| spec.var_type.clone()),
-            Some(Expression::Builtin(Builtin::Src)) => Some(self.current_owner.clone()),
             _ => None,
         }
     }

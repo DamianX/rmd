@@ -12,6 +12,7 @@ pub enum SemaErrorKind {
     InvalidIntrinsic,
     UnknownIntrinsic(String),
     DuplicateIntrinsic,
+    UnknownVarType(Option<Identifier>),
 }
 
 impl std::fmt::Display for SemaErrorKind {
@@ -26,6 +27,8 @@ impl std::fmt::Display for SemaErrorKind {
             Self::InvalidIntrinsic => write!(f, "intrinsic marker must be a text literal"),
             Self::UnknownIntrinsic(name) => write!(f, "intrinsic '{name}' is not declared by the prelude"),
             Self::DuplicateIntrinsic => write!(f, "procedure has more than one intrinsic marker"),
+            Self::UnknownVarType(Some(name)) => write!(f, "{name}: unknown variable type"),
+            Self::UnknownVarType(None) => write!(f, "unknown variable type"),
         }
     }
 }

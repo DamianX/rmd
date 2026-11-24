@@ -46,8 +46,8 @@ fn analyze_fixture(source: &str) -> (ObjectTree, ir::Module) {
     let preprocessed = preprocessor::preprocess(&arena, &path).expect("fixture should preprocess");
     let _ = std::fs::remove_file(path);
     assert!(preprocessed.errors.is_empty(), "{:?}", preprocessed.errors);
-    let ast = ast::parse(&preprocessed.tokens).expect("fixture should parse");
-    let (tree, errors) = sema::analyze(&ast);
+    let mut ast = ast::parse(&preprocessed.tokens).expect("fixture should parse");
+    let (tree, errors) = sema::analyze(&mut ast);
     assert!(errors.is_empty(), "{errors:?}");
     let (module, _) = ir::lower(&ast, &tree, true);
 
@@ -3309,6 +3309,18 @@ fn one_argument_istype_uses_the_declared_type() {
             "test",
         ),
         0.into()
+    );
+}
+
+#[test]
+fn one_argument_istype_resolves_declared_types() {
+    assert_eq!(
+        run_text_proc(
+            fixture!("programs/one_argument_istype_resolves_declared_types.dm"),
+            "test"
+        )
+        .expect("test"),
+        "1 0 1 1 1 1"
     );
 }
 

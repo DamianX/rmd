@@ -201,8 +201,8 @@ mod tests {
                 token => (token, location),
             })
             .collect::<Vec<_>>();
-        let ast = ast::parse(&tokens).expect("fixture should parse");
-        let (tree, errors) = sema::analyze(&ast);
+        let mut ast = ast::parse(&tokens).expect("fixture should parse");
+        let (tree, errors) = sema::analyze(&mut ast);
         assert!(errors.is_empty(), "{errors:?}");
         let (module, _) = lower(&ast, &tree, true);
 
@@ -248,8 +248,8 @@ mod tests {
     fn new_type_of(source: &str, owner: &str, proc_name: &str) -> Option<String> {
         let (tokens, errors) = lexer::tokenize(source);
         assert!(errors.is_empty(), "{errors:?}");
-        let ast = ast::parse(&tokens).expect("fixture should parse");
-        let (tree, _) = sema::analyze(&ast);
+        let mut ast = ast::parse(&tokens).expect("fixture should parse");
+        let (tree, _) = sema::analyze(&mut ast);
         let (module, _) = lower(&ast, &tree, true);
 
         let body = tree

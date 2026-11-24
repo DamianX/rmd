@@ -342,6 +342,64 @@ pub enum Expression {
     },
 }
 
+impl Expression {
+    pub fn for_each_child(&self, mut visit: impl FnMut(ExpressionId)) {
+        fn arguments(args: &[Argument], visit: &mut impl FnMut(ExpressionId)) {
+            for argument in args {
+                argument.key.into_iter().chain(argument.value).for_each(&mut *visit);
+            }
+        }
+
+        match self {
+            Self::Literal(_) | Self::Identifier(_) | Self::Path(_) | Self::Builtin(_) | Self::ContextMacro(_) => {},
+            Self::Grouped(inner) => visit(*inner),
+            Self::InterpString { expressions, .. } => expressions.iter().flatten().copied().for_each(visit),
+            Self::Unary { operand, .. } => visit(*operand),
+            Self::Binary { lhs_expr, rhs_expr, .. } | Self::Assign { lhs_expr, rhs_expr, .. } => {
+                visit(*lhs_expr);
+                visit(*rhs_expr);
+            },
+            Self::InRange {
+                value,
+                start,
+                end,
+                step,
+            } => [*value, *start, *end].into_iter().chain(*step).for_each(visit),
+            Self::Range { start, end, step } => [*start, *end].into_iter().chain(*step).for_each(visit),
+            Self::Ternary {
+                condition,
+                true_expr,
+                false_expr,
+            } => [*condition, *true_expr, *false_expr].into_iter().for_each(visit),
+            Self::Field { object, .. } => visit(*object),
+            Self::Index { object, index, .. } => {
+                visit(*object);
+                visit(*index);
+            },
+            Self::Call { callee, args } => {
+                visit(*callee);
+                arguments(args, &mut visit);
+            },
+            Self::New { type_expr, args } => {
+                type_expr.iter().copied().for_each(&mut visit);
+                arguments(args, &mut visit);
+            },
+            Self::ModifiedType { overrides, .. } => overrides.iter().map(|(_, value)| *value).for_each(visit),
+            Self::List(args) => arguments(args, &mut visit),
+            Self::Pick(values) => {
+                for pick in values {
+                    pick.weight.iter().copied().for_each(&mut visit);
+                    visit(pick.value);
+                }
+            },
+            Self::Input { args, in_list, .. } => {
+                arguments(args, &mut visit);
+                in_list.iter().copied().for_each(visit);
+            },
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Argument {
     pub key: Option<ExpressionId>,

@@ -1,4 +1,6 @@
 pub mod error;
+mod istype;
+mod walk;
 
 use base::{
     path::{PathFlags, TreePath},
@@ -19,7 +21,7 @@ use rustc_hash::FxHashMap;
 use crate::error::{SemaError, SemaErrorKind};
 
 pub struct Analyzer<'a> {
-    ast: &'a AST,
+    ast: &'a mut AST,
     tree: ObjectTree,
     errors: Vec<SemaError>,
     var_facts: FxHashMap<(TypeId, Identifier), VarFacts>,
@@ -34,7 +36,7 @@ struct VarFacts {
 }
 
 impl<'a> Analyzer<'a> {
-    pub fn new(ast: &'a AST) -> Self {
+    pub fn new(ast: &'a mut AST) -> Self {
         Self {
             ast,
             tree: ObjectTree::new(),
@@ -48,11 +50,13 @@ impl<'a> Analyzer<'a> {
     }
 
     pub fn add(&mut self) {
-        let ast = self.ast;
+        let declarations = std::mem::take(&mut self.ast.declarations);
         let root = TreePath::default();
-        for declaration in &ast.declarations {
+        for declaration in &declarations {
             self.walk(declaration, &root);
         }
+
+        self.ast.declarations = declarations;
     }
 
     pub fn finish(mut self) -> (ObjectTree, Vec<SemaError>) {
@@ -60,6 +64,7 @@ impl<'a> Analyzer<'a> {
         self.resolve_names();
         self.resolve_var_types();
         self.tree.number_shared_vars();
+        self.resolve_implicit_istype();
 
         (self.tree, self.errors)
     }
@@ -224,7 +229,7 @@ impl<'a> Analyzer<'a> {
                 let Some(name) = path.name().cloned() else {
                     return;
                 };
-                self.check_intrinsic(body.as_deref().unwrap_or_default(), *location);
+                let intrinsic = self.intrinsic(body.as_deref().unwrap_or_default(), *location);
 
                 let params = params
                     .iter()
@@ -246,6 +251,7 @@ impl<'a> Analyzer<'a> {
                         kind: *kind,
                         variadic: *variadic,
                         return_type: return_type.clone(),
+                        intrinsic,
                         location: *location,
                     },
                 );
@@ -295,15 +301,19 @@ impl<'a> Analyzer<'a> {
         }
     }
 
-    fn check_intrinsic(&mut self, body: &[Statement], location: base::location::Location) {
+    fn intrinsic(&mut self, body: &[Statement], location: base::location::Location) -> Option<Intrinsic> {
         let kind = match intrinsic_marker(self.ast, body) {
-            Ok(Some(name)) if Intrinsic::from_str(&name).is_err() => SemaErrorKind::UnknownIntrinsic(name),
-            Ok(_) => return,
+            Ok(Some(name)) => match Intrinsic::from_str(&name) {
+                Ok(intrinsic) => return Some(intrinsic),
+                Err(_) => SemaErrorKind::UnknownIntrinsic(name),
+            },
+            Ok(None) => return None,
             Err(IntrinsicMarkerError::Duplicate) => SemaErrorKind::DuplicateIntrinsic,
             Err(IntrinsicMarkerError::Invalid) => SemaErrorKind::InvalidIntrinsic,
         };
 
         self.errors.push(SemaError::new(kind, location));
+        None
     }
 }
 
@@ -481,7 +491,7 @@ fn resolve_spec(tree: &ObjectTree, spec: &TypeSpec) -> ResolvedVarType {
     }
 }
 
-pub fn analyze(ast: &AST) -> (ObjectTree, Vec<SemaError>) {
+pub fn analyze(ast: &mut AST) -> (ObjectTree, Vec<SemaError>) {
     let mut analyzer = Analyzer::new(ast);
     analyzer.add();
 
@@ -518,9 +528,9 @@ mod tests {
                 token => (token, location),
             })
             .collect::<Vec<_>>();
-        let ast = ast::parse(&tokens).expect("fixture should parse");
+        let mut ast = ast::parse(&tokens).expect("fixture should parse");
 
-        analyze(&ast)
+        analyze(&mut ast)
     }
 
     #[test]
@@ -664,5 +674,20 @@ mod tests {
                 ..
             }]
         ));
+    }
+
+    #[test]
+    fn one_argument_istype_needs_a_declared_type() {
+        let (_, errors) = analyze_source(fixture!("programs/one_argument_istype_needs_a_declared_type.dm"));
+        let kinds = errors.iter().map(|error| &error.kind).collect::<Vec<_>>();
+
+        assert!(
+            matches!(
+                kinds.as_slice(),
+                [SemaErrorKind::UnknownVarType(None), SemaErrorKind::UnknownVarType(Some(untyped))]
+                    if untyped.as_str() == "untyped"
+            ),
+            "{errors:?}"
+        );
     }
 }

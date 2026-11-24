@@ -1652,8 +1652,8 @@ mod tests {
     fn analyze(source: &str) -> (ObjectTree, ir::Module) {
         let (tokens, errors) = lexer::tokenize(source);
         assert!(errors.is_empty(), "{errors:?}");
-        let ast = ast::parse(&tokens).expect("fixture should parse");
-        let (tree, errors) = sema::analyze(&ast);
+        let mut ast = ast::parse(&tokens).expect("fixture should parse");
+        let (tree, errors) = sema::analyze(&mut ast);
         assert!(errors.is_empty(), "{errors:?}");
         let (module, _) = ir::lower(&ast, &tree, true);
 

@@ -67,8 +67,8 @@ fn palette_thumbnails_fall_back_to_a_standalone_bake_when_no_sprite_matches() {
             .expect("preprocess");
         assert!(preprocessed.is_ok(), "{:?}", preprocessed.errors);
 
-        let ast = ast::parse(&preprocessed.tokens).expect("parse");
-        let (tree, errors) = sema::analyze(&ast);
+        let mut ast = ast::parse(&preprocessed.tokens).expect("parse");
+        let (tree, errors) = sema::analyze(&mut ast);
         assert!(errors.is_empty(), "{errors:?}");
         let (module, _) = ir::lower(&ast, &tree, baking);
 

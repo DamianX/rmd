@@ -4,6 +4,7 @@ use base::{
     path::TreePath,
     types::{Identifier, ProcKind, TypeSpec, Value, VarModifiers},
 };
+use prelude::Intrinsic;
 use std::collections::{HashMap, HashSet};
 
 pub struct ObjectTree {
@@ -116,6 +117,7 @@ pub struct ProcDecl {
     pub kind: ProcKind,
     pub variadic: bool,
     pub return_type: Option<TypeSpec>,
+    pub intrinsic: Option<Intrinsic>,
     pub location: Location,
 }
 

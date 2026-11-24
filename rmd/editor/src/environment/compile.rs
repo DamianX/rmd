@@ -239,7 +239,7 @@ fn compile_view<'a>(
 
     progress.enter(Stage::Parse, 0);
     progress.set_detail(&format!("{} tokens", preprocessed.tokens.len()));
-    let ast = ast::parse(&preprocessed.tokens)
+    let mut ast = ast::parse(&preprocessed.tokens)
         .map_err(|error| LoadError::parse(error, &preprocessed.sources, preprocessed.entry, entry))?;
 
     // nothing preprocesses after the bake view, so only the editor view's buffer is kept for reuse
@@ -267,7 +267,7 @@ fn compile_view<'a>(
         })
         .collect::<Vec<_>>();
 
-    let (tree, sema_errors) = sema::analyze(&ast);
+    let (tree, sema_errors) = sema::analyze(&mut ast);
     // a view without a profile to bake never reaches codegen, so its IR is not worth lowering
     let profile = generate.then(|| select_profile(&tree, &files, options, forced));
     let (module, optimization_timings) = match &profile {

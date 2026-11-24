@@ -195,7 +195,7 @@ fn dump_tree(path: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     println!("=== PARSE ===");
-    let ast = ast::parse(&preprocessed.tokens).map_err(|error| {
+    let mut ast = ast::parse(&preprocessed.tokens).map_err(|error| {
         std::io::Error::other(format_parse_error(
             &error,
             &preprocessed.sources,
@@ -206,7 +206,7 @@ fn dump_tree(path: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     println!("{} top level declarations", ast.declarations.len());
 
     println!("=== TREE ===");
-    let (tree, errors) = sema::analyze(&ast);
+    let (tree, errors) = sema::analyze(&mut ast);
     print!("{}", render_tree(&tree, &preprocessed.sources, source_root));
 
     for error in &errors {
@@ -226,8 +226,8 @@ fn dump_ir(path: &Path, selection: EntrySelection) -> Result<(), Box<dyn std::er
         return Err("preprocessing failed".into());
     }
 
-    let ast = ast::parse(&preprocessed.tokens)?;
-    let (tree, _) = sema::analyze(&ast);
+    let mut ast = ast::parse(&preprocessed.tokens)?;
+    let (tree, _) = sema::analyze(&mut ast);
     let (module, _) = ir::lower(&ast, &tree, false);
     let color = std::env::var("DM_COLOR").is_ok();
     let output = match selection {
@@ -254,8 +254,8 @@ fn dump_bytecode(path: &Path, selection: EntrySelection) -> Result<(), Box<dyn s
         return Err("preprocessing failed".into());
     }
 
-    let ast = ast::parse(&preprocessed.tokens)?;
-    let (tree, _) = sema::analyze(&ast);
+    let mut ast = ast::parse(&preprocessed.tokens)?;
+    let (tree, _) = sema::analyze(&mut ast);
     let (module, _) = ir::lower(&ast, &tree, true);
     let module = match selection {
         EntrySelection::All => codegen::generate(&module)?,
@@ -321,7 +321,7 @@ fn bake_map(
     if !preprocessed.is_ok() {
         return Err("preprocessing failed".into());
     }
-    let ast = ast::parse(&preprocessed.tokens).map_err(|error| {
+    let mut ast = ast::parse(&preprocessed.tokens).map_err(|error| {
         std::io::Error::other(format_parse_error(
             &error,
             &preprocessed.sources,
@@ -329,7 +329,7 @@ fn bake_map(
             entry,
         ))
     })?;
-    let (tree, errors) = sema::analyze(&ast);
+    let (tree, errors) = sema::analyze(&mut ast);
     let (ir_module, _) = ir::lower(&ast, &tree, true);
     let uses = ir_module.procs.iter().flat_map(|procedure| {
         ir_module
@@ -629,7 +629,7 @@ fn evaluate_file_with(
         return Err("preprocessing failed".into());
     }
 
-    let ast = ast::parse(&preprocessed.tokens).map_err(|error| {
+    let mut ast = ast::parse(&preprocessed.tokens).map_err(|error| {
         std::io::Error::other(format_parse_error(
             &error,
             &preprocessed.sources,
@@ -637,7 +637,7 @@ fn evaluate_file_with(
             path,
         ))
     })?;
-    let (tree, errors) = sema::analyze(&ast);
+    let (tree, errors) = sema::analyze(&mut ast);
     let (module, _) = ir::lower(&ast, &tree, true);
     for error in &errors {
         eprintln!(
@@ -1064,8 +1064,8 @@ mod tests {
         let entry = sources.add(&arena, "/project/game/entry.dm", source.to_string());
         let (tokens, errors) = lexer::tokenize(source);
         assert!(errors.is_empty());
-        let ast = ast::parse(&tokens).expect("fixture should parse");
-        let (tree, errors) = sema::analyze(&ast);
+        let mut ast = ast::parse(&tokens).expect("fixture should parse");
+        let (tree, errors) = sema::analyze(&mut ast);
         assert!(errors.is_empty());
 
         let source_root = source_root(&sources, Some(entry), Path::new("/project/game/entry.dm"));

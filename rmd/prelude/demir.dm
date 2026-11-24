@@ -12,6 +12,7 @@
 #define SPACEMAN_DMM
 #define SpacemanDMM_unlint(X) X
 #define SpacemanDMM_debug(X...) X
+#define SpacemanDMM_final final
 #endif
 
 // Lighting and appearance fields

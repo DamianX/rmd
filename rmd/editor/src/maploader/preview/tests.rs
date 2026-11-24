@@ -87,8 +87,8 @@ fn analyze(entry: &Path) -> ObjectTree {
     let arena = StrArena::new();
     let preprocessed = preprocessor::preprocess(&arena, entry).unwrap();
     assert!(preprocessed.errors.is_empty(), "{:?}", preprocessed.errors);
-    let ast = ast::parse(&preprocessed.tokens).unwrap();
-    let (tree, errors) = sema::analyze(&ast);
+    let mut ast = ast::parse(&preprocessed.tokens).unwrap();
+    let (tree, errors) = sema::analyze(&mut ast);
     assert!(errors.is_empty(), "{errors:?}");
 
     tree

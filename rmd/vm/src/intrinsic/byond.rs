@@ -472,16 +472,13 @@ impl Evaluator<'_> {
     ///
     /// Returns: 1 if Val is derived from Type; 0 otherwise.
     pub(crate) fn istype(&self, value: GenericValue, base: GenericValue) -> bool {
-        let base_path = match base {
-            GenericValue::Path(path) => Some(*path),
-            _ => None,
-        };
-
-        match &value {
-            GenericValue::Object(_) | GenericValue::List(_) | GenericValue::ArgList(_) => {
-                base_path.is_none() || self.matches_type(&value, &base_path)
-            },
-            // a type path is not an instance, ispath() tests those
+        match base {
+            GenericValue::Path(path) => self.matches_type(&value, &path),
+            GenericValue::Object(object) => self
+                .runtime
+                .heap
+                .object(object)
+                .is_some_and(|ancestor| self.matches_type_id(&value, ancestor.ty)),
             _ => false,
         }
     }

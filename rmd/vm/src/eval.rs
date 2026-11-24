@@ -22,7 +22,7 @@ use crate::{
     bake::Placement,
     heap::{Heap, Object, ObjectId, Static},
     text::{self, Unit},
-    value::{IteratorId, ListData, ListId, MAX_EXACT_INTEGER, ModifiedType, ProcRef, RangeValue, Src},
+    value::{IteratorId, ListData, ListId, ListKind, MAX_EXACT_INTEGER, ModifiedType, ProcRef, RangeValue, Src},
     world::{Position, World},
 };
 
@@ -2511,29 +2511,27 @@ impl Evaluator<'_> {
         Ok(entries)
     }
 
-    pub(crate) fn matches_type(&self, value: &GenericValue, path: &Option<TreePath>) -> bool {
-        let Some(path) = path else {
-            return true;
-        };
+    pub(crate) fn matches_type(&self, value: &GenericValue, path: &TreePath) -> bool {
+        self.tree
+            .id_of(path)
+            .is_some_and(|ancestor| self.matches_type_id(value, ancestor))
+    }
 
-        if matches!(path.to_string().as_str(), "/list" | "/alist") {
-            let Some(id) = (match value {
-                GenericValue::List(id) | GenericValue::ArgList(id) => Some(*id),
-                _ => None,
-            }) else {
+    pub(crate) fn matches_type_id(&self, value: &GenericValue, ancestor: TypeId) -> bool {
+        let roots = self.tree.roots();
+        let is_list_root = roots.list == Some(ancestor);
+        if is_list_root || roots.alist == Some(ancestor) {
+            let (GenericValue::List(id) | GenericValue::ArgList(id)) = value else {
                 return false;
             };
-            return path.to_string() == "/list"
+
+            return is_list_root
                 || self
                     .runtime
                     .heap
-                    .list(id)
-                    .is_some_and(|list| list.kind == crate::value::ListKind::Alist);
+                    .list(*id)
+                    .is_some_and(|list| list.kind == ListKind::Alist);
         }
-
-        let Some(ancestor) = self.tree.id_of(path) else {
-            return false;
-        };
 
         value
             .object()
@@ -2585,7 +2583,7 @@ impl Evaluator<'_> {
                 &entry.0
             };
 
-            let matches = self.matches_type(value, &ty);
+            let matches = ty.as_ref().is_none_or(|path| self.matches_type(value, path));
             let Some(state) = self.iterators.get_mut(id.0 as usize) else {
                 return Err(self.fault(FaultKind::InvalidReference));
             };
@@ -2758,7 +2756,12 @@ impl Evaluator<'_> {
             _ => return Err(self.fault(FaultKind::InvalidOperation("new requires type".into()))),
         };
 
-        if path.to_string() == "/list" {
+        let ty = self
+            .tree
+            .id_of(&path)
+            .ok_or_else(|| self.fault(FaultKind::InvalidOperation(format!("unknown type {path}"))))?;
+        let roots = self.tree.roots();
+        if roots.list == Some(ty) {
             let size = args
                 .first()
                 .map(|(_, value)| self.number(value))
@@ -2771,7 +2774,6 @@ impl Evaluator<'_> {
             self.reserve(size)?;
             let value = self.list(vec![(GenericValue::Null, None); size])?;
             if let GenericValue::List(id) = &value
-                && let Some(ty) = self.tree.id_of(&path)
                 && let Some(proc) = self.find_proc(ty, &"New".into())
             {
                 self.call_function_for_proc(proc, Src::List(*id), None, args)?;
@@ -2779,7 +2781,7 @@ impl Evaluator<'_> {
             return Ok(value);
         }
 
-        if path.to_string() == "/alist" {
+        if roots.alist == Some(ty) {
             let entries = match args.first().map(|(_, value)| value.clone()) {
                 Some(value @ (GenericValue::List(_) | GenericValue::ArgList(_))) => self.iter_values(value)?,
                 _ => Vec::new(),
@@ -2787,7 +2789,6 @@ impl Evaluator<'_> {
             self.reserve(entries.len())?;
             let value = self.alist(entries)?;
             if let GenericValue::List(id) = &value
-                && let Some(ty) = self.tree.id_of(&path)
                 && let Some(proc) = self.find_proc(ty, &"New".into())
             {
                 self.call_function_for_proc(proc, Src::List(*id), None, args)?;
@@ -2795,15 +2796,7 @@ impl Evaluator<'_> {
             return Ok(value);
         }
 
-        let ty = self
-            .tree
-            .id_of(&path)
-            .ok_or_else(|| self.fault(FaultKind::InvalidOperation(format!("unknown type {path}"))))?;
-        let is_turf = self
-            .tree
-            .roots()
-            .turf
-            .is_some_and(|turf| self.tree.is_subtype_of(ty, turf));
+        let is_turf = roots.turf.is_some_and(|turf| self.tree.is_subtype_of(ty, turf));
         let replaced = args
             .first()
             .and_then(|(_, value)| value.object())

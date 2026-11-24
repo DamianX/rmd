@@ -456,31 +456,29 @@ impl Evaluator<'_> {
     ///
     /// Val: A type path.
     /// Type: A type path or instance.
-    pub(crate) fn ispath(&self, value: GenericValue, base: GenericValue) -> bool {
-        let ty = match value {
-            GenericValue::Path(path) => self.tree.id_of(&path),
-            _ => None,
+    pub(crate) fn ispath(&self, value: GenericValue, base: Option<GenericValue>) -> bool {
+        let GenericValue::Path(path) = value else {
+            return false;
         };
-        let base = match base {
-            GenericValue::Path(path) => self.tree.id_of(&path),
-            _ => None,
+
+        let Some(ty) = self.tree.id_of(&path) else {
+            return false;
         };
-        ty.is_some_and(|ty| base.is_none_or(|base| self.tree.is_subtype_of(ty, base)))
+
+        let Some(base) = base else {
+            return true;
+        };
+
+        self.resolve_type(&base)
+            .is_some_and(|ancestor| self.tree.is_subtype_of(ty, ancestor))
     }
 
     /// https://ref.dm-lang.org/proc/istype
     ///
     /// Returns: 1 if Val is derived from Type; 0 otherwise.
     pub(crate) fn istype(&self, value: GenericValue, base: GenericValue) -> bool {
-        match base {
-            GenericValue::Path(path) => self.matches_type(&value, &path),
-            GenericValue::Object(object) => self
-                .runtime
-                .heap
-                .object(object)
-                .is_some_and(|ancestor| self.matches_type_id(&value, ancestor.ty)),
-            _ => false,
-        }
+        self.resolve_type(&base)
+            .is_some_and(|ancestor| self.matches_type_id(&value, ancestor))
     }
 
     /// https://ref.dm-lang.org/proc/isturf

@@ -2511,6 +2511,14 @@ impl Evaluator<'_> {
         Ok(entries)
     }
 
+    pub(crate) fn resolve_type(&self, value: &GenericValue) -> Option<TypeId> {
+        match value {
+            GenericValue::Path(path) => self.tree.id_of(path),
+            GenericValue::Object(id) => self.runtime.heap.object(*id).map(|object| object.ty),
+            _ => None,
+        }
+    }
+
     pub(crate) fn matches_type(&self, value: &GenericValue, path: &TreePath) -> bool {
         self.tree
             .id_of(path)

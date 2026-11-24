@@ -13,7 +13,8 @@ impl Evaluator<'_> {
         &mut self, intrinsic: Intrinsic, src: Src, name: &str, params: &[Identifier],
         args: Vec<(Option<Identifier>, GenericValue)>,
     ) -> Result<GenericValue> {
-        let arg = |n: usize| args.get(n).map(|(_, value)| value.clone()).unwrap_or_default();
+        let optional_arg = |n: usize| args.get(n).map(|(_, value)| value.clone());
+        let arg = |n: usize| optional_arg(n).unwrap_or_default();
         let text = |n: usize| args.get(n).and_then(|(_, value)| value.text()).unwrap_or_default();
         let positional = || args.iter().map(|(_, value)| value.clone()).collect::<Vec<_>>();
 
@@ -226,7 +227,7 @@ impl Evaluator<'_> {
             Intrinsic::Istext => Ok(self.istext(&arg(0)).into()),
             Intrinsic::Islist => Ok(self.islist(&arg(0)).into()),
             Intrinsic::Isicon => Ok(self.isicon(arg(0)).into()),
-            Intrinsic::Ispath => Ok(self.ispath(arg(0), arg(1)).into()),
+            Intrinsic::Ispath => Ok(self.ispath(arg(0), optional_arg(1)).into()),
             Intrinsic::Istype => Ok(self.istype(arg(0), arg(1)).into()),
             Intrinsic::Isturf
             | Intrinsic::Isarea

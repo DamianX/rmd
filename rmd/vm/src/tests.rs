@@ -3329,6 +3329,14 @@ fn istype_matches_byond_for_non_path_types() {
 }
 
 #[test]
+fn ispath_matches_byond_for_non_path_types() {
+    assert_eq!(
+        run_text_proc(fixture!("programs/ispath_matches_byond_for_non_path_types.dm"), "test").expect("test"),
+        "1 0 | 0 | 1 0 0 | 0 0"
+    );
+}
+
+#[test]
 fn initial_reads_the_declaration_instead_of_the_current_field() {
     assert_eq!(
         run(

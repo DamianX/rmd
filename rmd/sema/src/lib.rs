@@ -75,7 +75,7 @@ impl<'a> Analyzer<'a> {
             .iter()
             .filter_map(|decl| {
                 let is_default_named =
-                    decl.id != atom_ty && decl.vars.get(&name).is_none() && self.tree.is_subtype_of(decl.id, atom_ty);
+                    decl.id != atom_ty && !decl.vars.contains_key(&name) && self.tree.is_subtype_of(decl.id, atom_ty);
                 if !is_default_named {
                     return None;
                 }

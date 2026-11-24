@@ -29,11 +29,7 @@ impl Evaluator<'_> {
         };
 
         // which object
-        let Some(subtype) = (match &subtype_arg {
-            GenericValue::Path(path) => self.tree.id_of(path),
-            GenericValue::Object(id) => self.runtime.heap.object(*id).map(|object| object.ty),
-            _ => None,
-        }) else {
+        let Some(subtype) = self.resolve_type(&subtype_arg) else {
             return Err(self.fault(invalid("subtype", &subtype_arg)));
         };
 
@@ -45,14 +41,9 @@ impl Evaluator<'_> {
             },
             value => vec![value],
         };
-        let resolve_type = |value: &GenericValue| match value {
-            GenericValue::Path(path) => self.tree.id_of(path),
-            GenericValue::Object(id) => self.runtime.heap.object(*id).map(|object| object.ty),
-            _ => None,
-        };
         let mut blockers = Vec::with_capacity(blocker_values.len());
         for value in &blocker_values {
-            let Some(blocker) = resolve_type(value) else {
+            let Some(blocker) = self.resolve_type(value) else {
                 return Err(self.fault(invalid("blocker", value)));
             };
 
@@ -63,7 +54,10 @@ impl Evaluator<'_> {
         let orientable_subtype = match orientable_arg {
             GenericValue::Null => None,
             value => {
-                let Some(ty) = resolve_type(&value).filter(|ty| self.tree.is_subtype_of(*ty, subtype)) else {
+                let Some(ty) = self
+                    .resolve_type(&value)
+                    .filter(|ty| self.tree.is_subtype_of(*ty, subtype))
+                else {
                     return Err(self.fault(FaultKind::InvalidOperation(format!(
                         "{name} orientable_subtype must be a descendant of the subtype, got {}",
                         value.display()
@@ -165,11 +159,7 @@ impl Evaluator<'_> {
             return Err(self.fault(FaultKind::Blocked(format!("{name} outside a profile's New()"))));
         }
 
-        let Some(subtype) = args.first().and_then(|(_, value)| match value {
-            GenericValue::Path(path) => self.tree.id_of(path),
-            GenericValue::Object(id) => self.runtime.heap.object(*id).map(|object| object.ty),
-            _ => None,
-        }) else {
+        let Some(subtype) = args.first().and_then(|(_, value)| self.resolve_type(value)) else {
             return Ok(GenericValue::Null);
         };
 
@@ -226,11 +216,7 @@ impl Evaluator<'_> {
             return Err(self.fault(FaultKind::Blocked(format!("{name} outside a profile's New()"))));
         }
 
-        let Some(subtype) = args.first().and_then(|(_, value)| match value {
-            GenericValue::Path(path) => self.tree.id_of(path),
-            GenericValue::Object(id) => self.runtime.heap.object(*id).map(|object| object.ty),
-            _ => None,
-        }) else {
+        let Some(subtype) = args.first().and_then(|(_, value)| self.resolve_type(value)) else {
             return Ok(GenericValue::Null);
         };
 
@@ -282,11 +268,7 @@ impl Evaluator<'_> {
             return Err(self.fault(FaultKind::Blocked(format!("{name} outside a profile's New()"))));
         }
 
-        let ty = match args.first().map(|(_, value)| value.clone()) {
-            Some(GenericValue::Path(path)) => self.tree.id_of(&path),
-            Some(GenericValue::Object(id)) => self.runtime.heap.object(id).map(|object| object.ty),
-            _ => None,
-        };
+        let ty = args.first().and_then(|(_, value)| self.resolve_type(value));
 
         if let Some(ty) = ty
             && !self.runtime.modular_roots.contains(&ty)
@@ -386,11 +368,7 @@ impl Evaluator<'_> {
         let group = group
             .filter(|value| value.is_finite() && *value >= 0.0)
             .unwrap_or_default() as u32;
-        let ty = match args.get(1).map(|(_, value)| value.clone()) {
-            Some(GenericValue::Path(path)) => self.tree.id_of(&path),
-            Some(GenericValue::Object(id)) => self.runtime.heap.object(id).map(|object| object.ty),
-            _ => None,
-        };
+        let ty = args.get(1).and_then(|(_, value)| self.resolve_type(value));
         if let Some(ty) = ty {
             *self.runtime.groups.entry(ty).or_default() |= group;
         }

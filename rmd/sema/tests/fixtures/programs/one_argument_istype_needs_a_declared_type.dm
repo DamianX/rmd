@@ -8,3 +8,6 @@
 	var/untyped = typed
 	istype(null)
 	return istype(typed) + istype(untyped)
+
+/proc/const_param(const/datum/thing/held)
+	return istype(held)

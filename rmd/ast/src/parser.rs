@@ -29,7 +29,7 @@ fn path_modifier(keyword: SoftKeyword) -> Option<PathModifier> {
         SoftKeyword::Proc => (PathFlags::IS_PROC, true, true),
         SoftKeyword::Verb => (PathFlags::IS_VERB, true, true),
         SoftKeyword::Var => (PathFlags::IS_VAR, true, false),
-        SoftKeyword::Global => (PathFlags::IS_GLOBAL, false, false),
+        SoftKeyword::Global => (PathFlags::IS_GLOBAL, false, true),
         SoftKeyword::Static => (PathFlags::IS_STATIC, false, true),
         SoftKeyword::Const => (PathFlags::IS_CONST, false, true),
         SoftKeyword::Tmp => (PathFlags::IS_TMP, false, true),
@@ -338,7 +338,7 @@ impl<'a, 't> Parser<'a, 't> {
         self.parse_path_in(false)
     }
 
-    /// `/obj/item/paper/final` names a type, and only `var/final/x` or a `var` block makes it a modifier
+    /// `/obj/item/paper/final` names a type, and only `var/final/x`, a `var` block or a proc param makes it a modifier
     fn parse_path_in(&mut self, declaring: bool) -> ParseResult<TreePath> {
         let absolute = self.peek_is(Token::Slash);
         // `/datum/manipulator_task/cargo/dropoff_base/throw`
@@ -720,9 +720,12 @@ impl<'a, 't> Parser<'a, 't> {
             let path = if self.consume(Token::Null) {
                 TreePath::new(vec![Identifier::from("null")], false)
             } else {
-                self.parse_path()?
+                // a param is a `var` without the keyword: `/proc/f(const/obj/O, obj/global)`
+                self.parse_path_in(true)?
             };
             let mut spec = self.var_spec_from_path(&path);
+            // BYOND still gives a `static` param its own value per call
+            spec.modifiers.is_static = false;
             self.parse_var_spec_suffix(&mut spec)?;
             let default = if self.consume(Token::Equal) {
                 Some(self.parse_expression(Precedence::Assignment)?)
@@ -2294,6 +2297,42 @@ mod tests {
     }
 
     #[test]
+    fn proc_params_keep_modifiers_without_a_var_keyword() {
+        let ast = parse_source(fixture!("programs/proc_params_keep_modifiers_without_a_var_keyword.dm"));
+        let Declaration::Proc { params, .. } = &ast.declarations[0] else {
+            panic!("expected a proc")
+        };
+
+        let typed: Vec<_> = params
+            .iter()
+            .map(|param| {
+                (
+                    param.spec.name.as_str(),
+                    param.spec.var_type.as_ref().map(TreePath::to_string),
+                    param.spec.modifiers.is_const,
+                )
+            })
+            .collect();
+
+        assert_eq!(
+            typed,
+            [
+                ("O", Some("/atom/movable".to_owned()), true),
+                ("L", Some("/list".to_owned()), true),
+                ("P", Some("/obj".to_owned()), true),
+                ("const", None, false),
+                ("G", None, false),
+                ("global", None, false),
+                ("global", Some("/obj".to_owned()), false),
+                ("static", Some("/obj".to_owned()), false),
+                ("S", None, false),
+                ("T", Some("/list".to_owned()), false),
+            ]
+        );
+        assert!(params.iter().all(|param| !param.spec.modifiers.is_static));
+    }
+
+    #[test]
     fn keywords_stay_usable_as_path_segments_and_names() {
         let ast = parse_source(fixture!("programs/keywords_stay_usable_as_path_segments_and_names.dm"));
         let Declaration::Type { path, body, .. } = &ast.declarations[0] else {
@@ -2315,6 +2354,44 @@ mod tests {
             "programs/keywords_stay_usable_as_path_segments_and_names-2.dm"
         ));
         assert_eq!(proc_body(&ast).len(), 4);
+    }
+
+    #[test]
+    fn global_stays_usable_as_a_variable_name() {
+        let ast = parse_source(fixture!("programs/global_stays_usable_as_a_variable_name.dm"));
+
+        let vars: Vec<_> = ast
+            .declarations
+            .iter()
+            .flat_map(|declaration| match declaration {
+                Declaration::Type { body, .. } => body,
+                other => panic!("expected a type declaration, got {other:?}"),
+            })
+            .map(|declaration| match declaration {
+                Declaration::Var {
+                    path,
+                    var_type,
+                    modifiers,
+                    ..
+                } => (
+                    path.name().map(ToString::to_string).unwrap_or_default(),
+                    var_type.as_ref().map(TreePath::to_string),
+                    modifiers.is_global,
+                ),
+                other => panic!("expected a var, got {other:?}"),
+            })
+            .collect();
+
+        assert_eq!(
+            vars,
+            [
+                ("global".to_owned(), None, false),
+                ("global".to_owned(), Some("/obj".to_owned()), false),
+                ("a".to_owned(), None, false),
+                ("global".to_owned(), None, false),
+                ("shared".to_owned(), None, true),
+            ]
+        );
     }
 
     #[test]
